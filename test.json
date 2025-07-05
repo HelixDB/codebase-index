@@ -1,0 +1,415 @@
+{
+  "sample": {
+    "lab00.py": {
+      "type": "module",
+      "start_byte": 0,
+      "end_byte": 165,
+      "order": 0,
+      "text": "def respect_your_cat(food, num):\r\n    # YOUR CODE GOES HERE #\r\n    if len(food) < 5:\r\n        return \"Give me more food!\"\r\n    else:\r\n        return food + \"!\" * num",
+      "children": [
+        {
+          "type": "function_definition",
+          "start_byte": 0,
+          "end_byte": 165,
+          "order": 0,
+          "text": "def respect_your_cat(food, num):\r\n    # YOUR CODE GOES HERE #\r\n    if len(food) < 5:\r\n        return \"Give me more food!\"\r\n    else:\r\n        return food + \"!\" * num",
+          "children": [
+            {
+              "type": "def",
+              "start_byte": 0,
+              "end_byte": 3,
+              "order": 0,
+              "text": "def",
+              "children": []
+            },
+            {
+              "type": "identifier",
+              "start_byte": 4,
+              "end_byte": 20,
+              "order": 1,
+              "text": "respect_your_cat",
+              "children": []
+            },
+            {
+              "type": "parameters",
+              "start_byte": 20,
+              "end_byte": 31,
+              "order": 2,
+              "text": "(food, num)",
+              "children": [
+                {
+                  "type": "(",
+                  "start_byte": 20,
+                  "end_byte": 21,
+                  "order": 0,
+                  "text": "(",
+                  "children": []
+                },
+                {
+                  "type": "identifier",
+                  "start_byte": 21,
+                  "end_byte": 25,
+                  "order": 1,
+                  "text": "food",
+                  "children": []
+                },
+                {
+                  "type": ",",
+                  "start_byte": 25,
+                  "end_byte": 26,
+                  "order": 2,
+                  "text": ",",
+                  "children": []
+                },
+                {
+                  "type": "identifier",
+                  "start_byte": 27,
+                  "end_byte": 30,
+                  "order": 3,
+                  "text": "num",
+                  "children": []
+                },
+                {
+                  "type": ")",
+                  "start_byte": 30,
+                  "end_byte": 31,
+                  "order": 4,
+                  "text": ")",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "type": ":",
+              "start_byte": 31,
+              "end_byte": 32,
+              "order": 3,
+              "text": ":",
+              "children": []
+            },
+            {
+              "type": "comment",
+              "start_byte": 38,
+              "end_byte": 62,
+              "order": 4,
+              "text": "# YOUR CODE GOES HERE #\r",
+              "children": []
+            },
+            {
+              "type": "block",
+              "start_byte": 67,
+              "end_byte": 165,
+              "order": 5,
+              "text": "if len(food) < 5:\r\n        return \"Give me more food!\"\r\n    else:\r\n        return food + \"!\" * num",
+              "children": [
+                {
+                  "type": "if_statement",
+                  "start_byte": 67,
+                  "end_byte": 165,
+                  "order": 0,
+                  "text": "if len(food) < 5:\r\n        return \"Give me more food!\"\r\n    else:\r\n        return food + \"!\" * num",
+                  "children": [
+                    {
+                      "type": "if",
+                      "start_byte": 67,
+                      "end_byte": 69,
+                      "order": 0,
+                      "text": "if",
+                      "children": []
+                    },
+                    {
+                      "type": "comparison_operator",
+                      "start_byte": 70,
+                      "end_byte": 83,
+                      "order": 1,
+                      "text": "len(food) < 5",
+                      "children": [
+                        {
+                          "type": "call",
+                          "start_byte": 70,
+                          "end_byte": 79,
+                          "order": 0,
+                          "text": "len(food)",
+                          "children": [
+                            {
+                              "type": "identifier",
+                              "start_byte": 70,
+                              "end_byte": 73,
+                              "order": 0,
+                              "text": "len",
+                              "children": []
+                            },
+                            {
+                              "type": "argument_list",
+                              "start_byte": 73,
+                              "end_byte": 79,
+                              "order": 1,
+                              "text": "(food)",
+                              "children": [
+                                {
+                                  "type": "(",
+                                  "start_byte": 73,
+                                  "end_byte": 74,
+                                  "order": 0,
+                                  "text": "(",
+                                  "children": []
+                                },
+                                {
+                                  "type": "identifier",
+                                  "start_byte": 74,
+                                  "end_byte": 78,
+                                  "order": 1,
+                                  "text": "food",
+                                  "children": []
+                                },
+                                {
+                                  "type": ")",
+                                  "start_byte": 78,
+                                  "end_byte": 79,
+                                  "order": 2,
+                                  "text": ")",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "<",
+                          "start_byte": 80,
+                          "end_byte": 81,
+                          "order": 1,
+                          "text": "<",
+                          "children": []
+                        },
+                        {
+                          "type": "integer",
+                          "start_byte": 82,
+                          "end_byte": 83,
+                          "order": 2,
+                          "text": "5",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "type": ":",
+                      "start_byte": 83,
+                      "end_byte": 84,
+                      "order": 2,
+                      "text": ":",
+                      "children": []
+                    },
+                    {
+                      "type": "block",
+                      "start_byte": 94,
+                      "end_byte": 121,
+                      "order": 3,
+                      "text": "return \"Give me more food!\"",
+                      "children": [
+                        {
+                          "type": "return_statement",
+                          "start_byte": 94,
+                          "end_byte": 121,
+                          "order": 0,
+                          "text": "return \"Give me more food!\"",
+                          "children": [
+                            {
+                              "type": "return",
+                              "start_byte": 94,
+                              "end_byte": 100,
+                              "order": 0,
+                              "text": "return",
+                              "children": []
+                            },
+                            {
+                              "type": "string",
+                              "start_byte": 101,
+                              "end_byte": 121,
+                              "order": 1,
+                              "text": "\"Give me more food!\"",
+                              "children": [
+                                {
+                                  "type": "string_start",
+                                  "start_byte": 101,
+                                  "end_byte": 102,
+                                  "order": 0,
+                                  "text": "\"",
+                                  "children": []
+                                },
+                                {
+                                  "type": "string_content",
+                                  "start_byte": 102,
+                                  "end_byte": 120,
+                                  "order": 1,
+                                  "text": "Give me more food!",
+                                  "children": []
+                                },
+                                {
+                                  "type": "string_end",
+                                  "start_byte": 120,
+                                  "end_byte": 121,
+                                  "order": 2,
+                                  "text": "\"",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "else_clause",
+                      "start_byte": 127,
+                      "end_byte": 165,
+                      "order": 4,
+                      "text": "else:\r\n        return food + \"!\" * num",
+                      "children": [
+                        {
+                          "type": "else",
+                          "start_byte": 127,
+                          "end_byte": 131,
+                          "order": 0,
+                          "text": "else",
+                          "children": []
+                        },
+                        {
+                          "type": ":",
+                          "start_byte": 131,
+                          "end_byte": 132,
+                          "order": 1,
+                          "text": ":",
+                          "children": []
+                        },
+                        {
+                          "type": "block",
+                          "start_byte": 142,
+                          "end_byte": 165,
+                          "order": 2,
+                          "text": "return food + \"!\" * num",
+                          "children": [
+                            {
+                              "type": "return_statement",
+                              "start_byte": 142,
+                              "end_byte": 165,
+                              "order": 0,
+                              "text": "return food + \"!\" * num",
+                              "children": [
+                                {
+                                  "type": "return",
+                                  "start_byte": 142,
+                                  "end_byte": 148,
+                                  "order": 0,
+                                  "text": "return",
+                                  "children": []
+                                },
+                                {
+                                  "type": "binary_operator",
+                                  "start_byte": 149,
+                                  "end_byte": 165,
+                                  "order": 1,
+                                  "text": "food + \"!\" * num",
+                                  "children": [
+                                    {
+                                      "type": "identifier",
+                                      "start_byte": 149,
+                                      "end_byte": 153,
+                                      "order": 0,
+                                      "text": "food",
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "+",
+                                      "start_byte": 154,
+                                      "end_byte": 155,
+                                      "order": 1,
+                                      "text": "+",
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "binary_operator",
+                                      "start_byte": 156,
+                                      "end_byte": 165,
+                                      "order": 2,
+                                      "text": "\"!\" * num",
+                                      "children": [
+                                        {
+                                          "type": "string",
+                                          "start_byte": 156,
+                                          "end_byte": 159,
+                                          "order": 0,
+                                          "text": "\"!\"",
+                                          "children": [
+                                            {
+                                              "type": "string_start",
+                                              "start_byte": 156,
+                                              "end_byte": 157,
+                                              "order": 0,
+                                              "text": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "type": "string_content",
+                                              "start_byte": 157,
+                                              "end_byte": 158,
+                                              "order": 1,
+                                              "text": "!",
+                                              "children": []
+                                            },
+                                            {
+                                              "type": "string_end",
+                                              "start_byte": 158,
+                                              "end_byte": 159,
+                                              "order": 2,
+                                              "text": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "type": "*",
+                                          "start_byte": 160,
+                                          "end_byte": 161,
+                                          "order": 1,
+                                          "text": "*",
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "identifier",
+                                          "start_byte": 162,
+                                          "end_byte": 165,
+                                          "order": 2,
+                                          "text": "num",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "simple_code": {
+      "testfile.py": {
+        "type": "module",
+        "start_byte": 0,
+        "end_byte": 0,
+        "order": 0,
+        "text": "",
+        "children": []
+      }
+    }
+  }
+}
