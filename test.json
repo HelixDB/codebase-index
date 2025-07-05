@@ -3,9 +3,9 @@
     "lab00.py": {
       "type": "module",
       "start_byte": 0,
-      "end_byte": 165,
+      "end_byte": 262,
       "order": 0,
-      "text": "def respect_your_cat(food, num):\r\n    # YOUR CODE GOES HERE #\r\n    if len(food) < 5:\r\n        return \"Give me more food!\"\r\n    else:\r\n        return food + \"!\" * num",
+      "text": "def respect_your_cat(food, num):\r\n    # YOUR CODE GOES HERE #\r\n    if len(food) < 5:\r\n        return \"Give me more food!\"\r\n    else:\r\n        return food + \"!\" * num\r\n\r\ndef main():\r\n    print(respect_your_cat(\"fish\", 3))\r\n\r\nif __name__ == \"__main__\":\r\n    main()",
       "children": [
         {
           "type": "function_definition",
@@ -388,6 +388,358 @@
                                   ]
                                 }
                               ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "function_definition",
+          "start_byte": 169,
+          "end_byte": 220,
+          "order": 1,
+          "text": "def main():\r\n    print(respect_your_cat(\"fish\", 3))",
+          "children": [
+            {
+              "type": "def",
+              "start_byte": 169,
+              "end_byte": 172,
+              "order": 0,
+              "text": "def",
+              "children": []
+            },
+            {
+              "type": "identifier",
+              "start_byte": 173,
+              "end_byte": 177,
+              "order": 1,
+              "text": "main",
+              "children": []
+            },
+            {
+              "type": "parameters",
+              "start_byte": 177,
+              "end_byte": 179,
+              "order": 2,
+              "text": "()",
+              "children": [
+                {
+                  "type": "(",
+                  "start_byte": 177,
+                  "end_byte": 178,
+                  "order": 0,
+                  "text": "(",
+                  "children": []
+                },
+                {
+                  "type": ")",
+                  "start_byte": 178,
+                  "end_byte": 179,
+                  "order": 1,
+                  "text": ")",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "type": ":",
+              "start_byte": 179,
+              "end_byte": 180,
+              "order": 3,
+              "text": ":",
+              "children": []
+            },
+            {
+              "type": "block",
+              "start_byte": 186,
+              "end_byte": 220,
+              "order": 4,
+              "text": "print(respect_your_cat(\"fish\", 3))",
+              "children": [
+                {
+                  "type": "expression_statement",
+                  "start_byte": 186,
+                  "end_byte": 220,
+                  "order": 0,
+                  "text": "print(respect_your_cat(\"fish\", 3))",
+                  "children": [
+                    {
+                      "type": "call",
+                      "start_byte": 186,
+                      "end_byte": 220,
+                      "order": 0,
+                      "text": "print(respect_your_cat(\"fish\", 3))",
+                      "children": [
+                        {
+                          "type": "identifier",
+                          "start_byte": 186,
+                          "end_byte": 191,
+                          "order": 0,
+                          "text": "print",
+                          "children": []
+                        },
+                        {
+                          "type": "argument_list",
+                          "start_byte": 191,
+                          "end_byte": 220,
+                          "order": 1,
+                          "text": "(respect_your_cat(\"fish\", 3))",
+                          "children": [
+                            {
+                              "type": "(",
+                              "start_byte": 191,
+                              "end_byte": 192,
+                              "order": 0,
+                              "text": "(",
+                              "children": []
+                            },
+                            {
+                              "type": "call",
+                              "start_byte": 192,
+                              "end_byte": 219,
+                              "order": 1,
+                              "text": "respect_your_cat(\"fish\", 3)",
+                              "children": [
+                                {
+                                  "type": "identifier",
+                                  "start_byte": 192,
+                                  "end_byte": 208,
+                                  "order": 0,
+                                  "text": "respect_your_cat",
+                                  "children": []
+                                },
+                                {
+                                  "type": "argument_list",
+                                  "start_byte": 208,
+                                  "end_byte": 219,
+                                  "order": 1,
+                                  "text": "(\"fish\", 3)",
+                                  "children": [
+                                    {
+                                      "type": "(",
+                                      "start_byte": 208,
+                                      "end_byte": 209,
+                                      "order": 0,
+                                      "text": "(",
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "string",
+                                      "start_byte": 209,
+                                      "end_byte": 215,
+                                      "order": 1,
+                                      "text": "\"fish\"",
+                                      "children": [
+                                        {
+                                          "type": "string_start",
+                                          "start_byte": 209,
+                                          "end_byte": 210,
+                                          "order": 0,
+                                          "text": "\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "string_content",
+                                          "start_byte": 210,
+                                          "end_byte": 214,
+                                          "order": 1,
+                                          "text": "fish",
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "string_end",
+                                          "start_byte": 214,
+                                          "end_byte": 215,
+                                          "order": 2,
+                                          "text": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": ",",
+                                      "start_byte": 215,
+                                      "end_byte": 216,
+                                      "order": 2,
+                                      "text": ",",
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "integer",
+                                      "start_byte": 217,
+                                      "end_byte": 218,
+                                      "order": 3,
+                                      "text": "3",
+                                      "children": []
+                                    },
+                                    {
+                                      "type": ")",
+                                      "start_byte": 218,
+                                      "end_byte": 219,
+                                      "order": 4,
+                                      "text": ")",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": ")",
+                              "start_byte": 219,
+                              "end_byte": 220,
+                              "order": 2,
+                              "text": ")",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "if_statement",
+          "start_byte": 224,
+          "end_byte": 262,
+          "order": 2,
+          "text": "if __name__ == \"__main__\":\r\n    main()",
+          "children": [
+            {
+              "type": "if",
+              "start_byte": 224,
+              "end_byte": 226,
+              "order": 0,
+              "text": "if",
+              "children": []
+            },
+            {
+              "type": "comparison_operator",
+              "start_byte": 227,
+              "end_byte": 249,
+              "order": 1,
+              "text": "__name__ == \"__main__\"",
+              "children": [
+                {
+                  "type": "identifier",
+                  "start_byte": 227,
+                  "end_byte": 235,
+                  "order": 0,
+                  "text": "__name__",
+                  "children": []
+                },
+                {
+                  "type": "==",
+                  "start_byte": 236,
+                  "end_byte": 238,
+                  "order": 1,
+                  "text": "==",
+                  "children": []
+                },
+                {
+                  "type": "string",
+                  "start_byte": 239,
+                  "end_byte": 249,
+                  "order": 2,
+                  "text": "\"__main__\"",
+                  "children": [
+                    {
+                      "type": "string_start",
+                      "start_byte": 239,
+                      "end_byte": 240,
+                      "order": 0,
+                      "text": "\"",
+                      "children": []
+                    },
+                    {
+                      "type": "string_content",
+                      "start_byte": 240,
+                      "end_byte": 248,
+                      "order": 1,
+                      "text": "__main__",
+                      "children": []
+                    },
+                    {
+                      "type": "string_end",
+                      "start_byte": 248,
+                      "end_byte": 249,
+                      "order": 2,
+                      "text": "\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": ":",
+              "start_byte": 249,
+              "end_byte": 250,
+              "order": 2,
+              "text": ":",
+              "children": []
+            },
+            {
+              "type": "block",
+              "start_byte": 256,
+              "end_byte": 262,
+              "order": 3,
+              "text": "main()",
+              "children": [
+                {
+                  "type": "expression_statement",
+                  "start_byte": 256,
+                  "end_byte": 262,
+                  "order": 0,
+                  "text": "main()",
+                  "children": [
+                    {
+                      "type": "call",
+                      "start_byte": 256,
+                      "end_byte": 262,
+                      "order": 0,
+                      "text": "main()",
+                      "children": [
+                        {
+                          "type": "identifier",
+                          "start_byte": 256,
+                          "end_byte": 260,
+                          "order": 0,
+                          "text": "main",
+                          "children": []
+                        },
+                        {
+                          "type": "argument_list",
+                          "start_byte": 260,
+                          "end_byte": 262,
+                          "order": 1,
+                          "text": "()",
+                          "children": [
+                            {
+                              "type": "(",
+                              "start_byte": 260,
+                              "end_byte": 261,
+                              "order": 0,
+                              "text": "(",
+                              "children": []
+                            },
+                            {
+                              "type": ")",
+                              "start_byte": 261,
+                              "end_byte": 262,
+                              "order": 1,
+                              "text": ")",
+                              "children": []
                             }
                           ]
                         }

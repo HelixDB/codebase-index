@@ -4,4 +4,9 @@ def respect_your_cat(food, num):
         return "Give me more food!"
     else:
         return food + "!" * num
-print(respect_your_cat("fish", 3))
+
+def main():
+    print(respect_your_cat("fish", 3))
+
+if __name__ == "__main__":
+    main()
