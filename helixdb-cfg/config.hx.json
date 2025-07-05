@@ -2,7 +2,7 @@
 {
     "vector_config": {
         "m": 16,
-        "ef_construction": 128,
+        "ef_construction": 768,
         "ef_search": 768
     },
     "graph_config": {
