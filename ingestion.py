@@ -19,12 +19,15 @@ JS_LANGUAGE = Language(tree_sitter_javascript.language())
 py_parser = Parser(PY_LANGUAGE)
 js_parser = Parser(JS_LANGUAGE)
 
+# Maximum depth of sub entities to process
+MAX_DEPTH = 2
+
 # HelixDB Instance
 instance = Instance()
 time.sleep(1)
 
 # HelixDB Client
-client = Client(local=True, verbose=False)
+client = Client(local=True, verbose=True)
 
 # Thread pool for parallel processing
 MAX_WORKERS = min(os.cpu_count()//2, 8)
@@ -36,6 +39,7 @@ seen_files = set()
 # Cache for directory-specific PathSpecs
 spec_map = {}
 
+# Ingestion function
 def ingestion(root_path):
     # Ensure root_path is absolute
     root_path = os.path.abspath(root_path)
@@ -56,13 +60,91 @@ def random_embedding(text:str):
     return [0.1 for _ in range(768)]
 
 # Helper functions
+def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, root_dir=None):
+    dir_dict = scan_directory(full_path, gitignore_specs, root_dir)
+    
+    # Extract gitignore specs and root_dir if they were returned by scan_directory
+    gitignore_specs = dir_dict.get("gitignore_specs", gitignore_specs)
+    root_dir = dir_dict.get("root_dir", root_dir)
+
+    print(f'\nProcessing {len(dir_dict["folders"])} folders')
+    
+    # Store futures for parallel folder processing
+    folder_futures = []
+    folder_ids = {}
+    
+    # First create all folder entries
+    for folder in dir_dict["folders"]:
+        print(f"\nProcessing folder: {folder}")
+        if curr_type == 'root':
+            # Create super folder
+            folder_id = client.query('createSuperFolder', {'root_id': parent_id, 'name': folder})[0]['folder'][0]['id']
+        else:
+            # Create sub folder
+            folder_id = client.query('createSubFolder', {'folder_id': parent_id, 'name': folder})[0]['subfolder'][0]['id']
+            
+        folder_ids[folder] = folder_id
+        
+        # Submit folder processing to thread pool for parallel execution
+        folder_path = os.path.join(full_path, folder)
+        folder_futures.append(executor.submit(
+            populate, 
+            folder_path, 
+            'folder', 
+            folder_id, 
+            gitignore_specs, 
+            root_dir
+        ))
+
+    # Process files in parallel
+    print(f'\nProcessing {len(dir_dict["files"])} files')
+    
+    # Filter out ignored files
+    files_to_process = [file for file in dir_dict["files"] if not is_ignored(os.path.join(full_path, file), gitignore_specs, root_dir)]
+    
+    # Submit file processing tasks to the thread pool
+    file_futures = []
+    for file in files_to_process:
+        print(f"\nSubmitting {file} for processing")
+        file_futures.append(executor.submit(
+            process_file,
+            file,
+            full_path,
+            curr_type,
+            parent_id
+        ))
+    
+    # Wait for all file processing to complete
+    for future in file_futures:
+        try:
+            success = future.result()
+        except Exception as e:
+            print(f"Error in file processing: {e}")
+    
+    # Wait for all folder processing to complete
+    for future in folder_futures:
+        try:
+            future.result()
+        except Exception as e:
+            print(f"Error in folder processing: {e}")
+    
+    del dir_dict
+
 def process_file(file, full_path, curr_type, parent_id):
-    """Process a single file in parallel"""
+    print(f"{file} is from {curr_type}")
     try:
+        parser = None
         if file.endswith('.py'):
+            parser = py_parser
+        # elif file.endswith('.js'):
+        #     parser = js_parser
+        elif file == '.gitignore':
+            parser = None
+        
+        if parser is not None:
             # Extract python code structure with tree-sitter
             file_path = os.path.join(full_path, file)
-            tree, code = parse_file(file_path, py_parser)
+            tree, code = parse_file(file_path, parser)
 
             if tree:
                 tree_dict = node_to_dict(tree.root_node, code, 0)
@@ -79,9 +161,8 @@ def process_file(file, full_path, curr_type, parent_id):
                 children = tree_dict['children']
                 del tree_dict
 
-                print(f"Processing {len(children)} super entities in {file}")
+                print(f"\nProcessing {len(children)} super entities in {file}")
                 for superentity in children:
-                    print(f"Reached {superentity['type']} in {file}")
                     # Create super entity
                     super_entity_id = client.query('createSuperEntity', {'file_id': file_id, 'entity_type': superentity['type'], 'start_byte': superentity['start_byte'], 'end_byte': superentity['end_byte'], 'order': superentity['order'], 'text': superentity['text']})[0]['entity'][0]['id']
                     
@@ -107,91 +188,49 @@ def process_file(file, full_path, curr_type, parent_id):
                     del code
                 return False
         else:
-            print(f'Not python file: {file}')
+            print(f'Ignored: {file}')
             return False
     except Exception as e:
         print(f"Error processing file {file}: {e}")
         return False
 
-def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, root_dir=None):
-    dir_dict = scan_directory(full_path, gitignore_specs, root_dir)
-    
-    # Extract gitignore specs and root_dir if they were returned by scan_directory
-    gitignore_specs = dir_dict.get("gitignore_specs", gitignore_specs)
-    root_dir = dir_dict.get("root_dir", root_dir)
+def process_entities(parent_dict, parent_id, step = 0):
+    if step == MAX_DEPTH:
+        return
 
-    print(f'Processing {len(dir_dict["folders"])} folders')
-    
-    # Store futures for parallel folder processing
-    folder_futures = []
-    folder_ids = {}
-    
-    # First create all folder entries
-    for folder in dir_dict["folders"]:
-        print(f"Reached {folder}")
-        if curr_type == 'root':
-            # Create super folder
-            folder_id = client.query('createSuperFolder', {'root_id': parent_id, 'name': folder})[0]['folder'][0]['id']
-        else:
-            # Create sub folder
-            folder_id = client.query('createSubFolder', {'folder_id': parent_id, 'name': folder})[0]['subfolder'][0]['id']
-            
-        folder_ids[folder] = folder_id
-        
-        # Submit folder processing to thread pool for parallel execution
-        folder_path = os.path.join(full_path, folder)
-        folder_futures.append(executor.submit(
-            populate, 
-            folder_path, 
-            'folder', 
-            folder_id, 
-            gitignore_specs, 
-            root_dir
-        ))
-
-    # Process files in parallel
-    print(f'Processing {len(dir_dict["files"])} files')
-    
-    # Filter out ignored files
-    files_to_process = [file for file in dir_dict["files"] 
-                      if not is_ignored(os.path.join(full_path, file), gitignore_specs, root_dir)]
-    
-    # Submit file processing tasks to the thread pool
-    file_futures = []
-    for file in files_to_process:
-        print(f"Submitting {file} for processing")
-        file_futures.append(executor.submit(
-            process_file,
-            file,
-            full_path,
-            curr_type,
-            parent_id
-        ))
-    
-    # Wait for all file processing to complete
-    for future in file_futures:
-        try:
-            success = future.result()
-        except Exception as e:
-            print(f"Error in file processing: {e}")
-    
-    # Wait for all folder processing to complete
-    for future in folder_futures:
-        try:
-            future.result()
-        except Exception as e:
-            print(f"Error in folder processing: {e}")
-    
-    del dir_dict
-
-def process_entities(parent_dict, parent_id):
     children = parent_dict['children']
     payload = [{'entity_id': parent_id, 'entity_type': entity['type'], 'start_byte': entity['start_byte'], 'end_byte': entity['end_byte'], 'order': entity['order'], 'text': entity['text']} for entity in children]
+    
     if len(payload) < 1:
         return
     entity_ids = [entity['entity'][0]['id'] for entity in client.query('createSubEntity', payload)]
-    for entity_id, entity in zip(entity_ids, children):
-        process_entities(entity, entity_id)
+    del payload
+    
+    # Only use parallel processing if we have enough entities and we're not too deep
+    if len(entity_ids) > 3:
+        # Process entities in parallel
+        futures = []
+        for i in range(len(entity_ids)):
+            futures.append(executor.submit(
+                process_entities, 
+                children[i], 
+                entity_ids[i], 
+                step + 1
+            ))
+        
+        # Wait for all entity processing to complete
+        for future in futures:
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error in parallel entity processing: {e}")
+    else:
+        # Process entities sequentially for small batches or deep nesting
+        for i in range(len(entity_ids)):
+            process_entities(children[i], entity_ids[i], step + 1)
+
+    del children
+    del entity_ids
 
 def parse_file(file_path, parser):
     try:
@@ -201,7 +240,7 @@ def parse_file(file_path, parser):
         # Calculate file hash to avoid re-parsing identical files
         file_hash = hashlib.sha1(source_code).hexdigest()
         if file_hash in seen_files:
-            print(f"Skipping already processed file with same content: {file_path}")
+            print(f"Ignored duplicate: {file_path}")
             return None, None
             
         seen_files.add(file_hash)
@@ -300,7 +339,7 @@ def load_gitignore_specs(root_path):
                     # Filter out empty lines and comments
                     patterns = [p for p in patterns if p and not p.startswith('#')]
                     if patterns:
-                        print(f"Found .gitignore at {current_path} with patterns: {patterns}")
+                        print(f"Found .gitignore at {current_path}")
                         pattern_lists[current_path] = patterns
                         specs[current_path] = get_spec(patterns)
             except Exception as e:
@@ -395,25 +434,20 @@ def scan_directory(root_path, gitignore_specs=None, root_dir=None):
     # Initialize gitignore specs if not provided
     if gitignore_specs is None:
         gitignore_specs, root_dir = load_gitignore_specs(root_path)
-        print(f"Loaded gitignore specs from {len(gitignore_specs)} files")
-        for path in gitignore_specs:
-            if path != "DEFAULT":
-                print(f"  - {path}/.gitignore")
     
     # Check if the directory itself is ignored
     if is_ignored(root_path, gitignore_specs, root_dir):
-        print(f"Directory {root_path} is ignored by gitignore rules")
+        print(f"Ignored: {root_path}")
         return {"folders": [], "files": []}
     
     # Get or update gitignore specs for this path
     gitignore_specs = get_spec_for_path(root_path, gitignore_specs)
     
-    # Use os.scandir for more efficient directory iteration
-    # This avoids extra stat calls compared to os.listdir + os.path.isdir
+    # Scan directory
     for entry in os.scandir(root_path):
         # Skip ignored files and folders
         if is_ignored(entry.path, gitignore_specs, root_dir):
-            print(f"Skipping {entry.name} as it's ignored by gitignore rules")
+            print(f"Ignored: {entry.name}")
             continue
         
         if entry.is_dir():
@@ -427,8 +461,8 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="HelixDB Codebase Ingestion")
     argparser.add_argument("root", help="root directory of codebase", nargs="?", type=str, default=os.getcwd())
     args = argparser.parse_args()
-    print(f"Scanning Codebase at: {args.root}")
+    print(f"Scanning Codebase at: {args.root}\n")
     start_time = time.time()
     ingestion(args.root)
-    print(f"Instance ID: {instance.instance_id}")
+    print(f"\nInstance ID: {instance.instance_id}")
     print(f"Time taken: {time.time() - start_time}")
