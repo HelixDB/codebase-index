@@ -30,9 +30,9 @@ QUERY createFile(folder_id: ID, name: String, text: String) =>
     RETURN file
 
 // Create Entities
-QUERY createSuperEntity(file_id: ID, type: String, start_byte: I64, end_byte: I64, order: I64, text: String) => 
+QUERY createSuperEntity(file_id: ID, entity_type: String, start_byte: I64, end_byte: I64, order: I64, text: String) => 
     file <- N<File>(file_id)
-    entity <- AddN<Entity>({type:type, start_byte:start_byte, end_byte:end_byte, order:order, text:text})
+    entity <- AddN<Entity>({entity_type:entity_type, start_byte:start_byte, end_byte:end_byte, order:order, text:text})
     AddE<File_to_Entity>()::From(file)::To(entity)
     RETURN entity
 
@@ -42,9 +42,9 @@ QUERY embedSuperEntity(entity_id: ID, vector: [F64]) =>
     AddE<Entity_to_EmbededCode>()::From(entity)::To(embeded_code)
     RETURN embeded_code
 
-QUERY createSubEntity(entity_id: ID, type: String, start_byte: I64, end_byte: I64, order: I64, text: String) => 
+QUERY createSubEntity(entity_id: ID, entity_type: String, start_byte: I64, end_byte: I64, order: I64, text: String) => 
     parent <- N<Entity>(entity_id)
-    entity <- AddN<Entity>({type:type, start_byte:start_byte, end_byte:end_byte, order:order, text:text})
+    entity <- AddN<Entity>({entity_type:entity_type, start_byte:start_byte, end_byte:end_byte, order:order, text:text})
     AddE<Entity_to_Entity>()::From(parent)::To(entity)
     RETURN entity
 

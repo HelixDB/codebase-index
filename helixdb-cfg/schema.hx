@@ -15,7 +15,7 @@ N::File {
 }
 
 N::Entity {
-    type: String,
+    entity_type: String,
     start_byte: I64,
     end_byte: I64,
     order: I64,
