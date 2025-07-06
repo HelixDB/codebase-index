@@ -237,7 +237,7 @@ def scan_directory(root_path, gitignore_specs=None, root_dir=None):
     # Check if the directory itself is ignored
     if is_ignored(root_path, gitignore_specs):
         print(f"Directory {root_path} is ignored by gitignore rules")
-        return {"folders": [], "files": [], "gitignore_specs": gitignore_specs, "root_dir": root_dir}
+        return {"folders": [], "files": []}
     
     # Check for a .gitignore file in the current directory
     local_gitignore = os.path.join(root_path, '.gitignore')
