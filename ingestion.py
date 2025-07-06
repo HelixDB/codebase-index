@@ -4,7 +4,12 @@ import os
 import time
 import argparse
 import pathspec
+import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from helix import Client, Instance
+
+# Default patterns to always ignore
+DEFAULT_IGNORE_PATTERNS = ['.git/']
 
 # Parser Languages
 PY_LANGUAGE = Language(tree_sitter_python.language())
@@ -21,6 +26,16 @@ time.sleep(1)
 # HelixDB Client
 client = Client(local=True, verbose=False)
 
+# Thread pool for parallel processing
+MAX_WORKERS = min(os.cpu_count()//2, 8)
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+# Cache for seen files to avoid re-parsing
+seen_files = set()
+
+# Cache for directory-specific PathSpecs
+spec_map = {}
+
 def ingestion(root_path):
     # Ensure root_path is absolute
     root_path = os.path.abspath(root_path)
@@ -34,37 +49,16 @@ def ingestion(root_path):
 # Modifiable helper functions
 # TODO: Replace with actual chunking function
 def chunk_entity(text:str):
-    return [text[i:i+50] for i in range(0, len(text)+1, 50)]
+    return [text[i:i+1000] for i in range(0, len(text), 1000)]
 
 # TODO: Replace with actual embedding function
-from random import random
 def random_embedding(text:str):
-    return [random() for _ in range(768)]
+    return [0.1 for _ in range(768)]
 
 # Helper functions
-def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, root_dir=None):
-    dir_dict = scan_directory(full_path, gitignore_specs, root_dir)
-    
-    # Extract gitignore specs and root_dir if they were returned by scan_directory
-    gitignore_specs = dir_dict.get("gitignore_specs", gitignore_specs)
-    root_dir = dir_dict.get("root_dir", root_dir)
-
-    print(f'Processing {len(dir_dict["folders"])} folders')
-    for folder in dir_dict["folders"]:
-        print(f"Reached {folder}")
-        if curr_type == 'root':
-            # Create super folder
-            folder_id = client.query('createSuperFolder', {'root_id': parent_id, 'name': folder})[0]['folder'][0]['id']
-        else:
-            # Create sub folder
-            folder_id = client.query('createSubFolder', {'folder_id': parent_id, 'name': folder})[0]['subfolder'][0]['id']
-        
-        # Recursively populate the stuff in the folder
-        populate(os.path.join(full_path, folder), curr_type='folder', parent_id=folder_id, gitignore_specs=gitignore_specs, root_dir=root_dir)
-
-    print(f'Processing {len(dir_dict["files"])} files')
-    for file in dir_dict["files"]:
-        print(f"Reached {file}")
+def process_file(file, full_path, curr_type, parent_id):
+    """Process a single file in parallel"""
+    try:
         if file.endswith('.py'):
             # Extract python code structure with tree-sitter
             file_path = os.path.join(full_path, file)
@@ -85,9 +79,9 @@ def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, 
                 children = tree_dict['children']
                 del tree_dict
 
-                print(f"Processing {len(children)} super entities")
+                print(f"Processing {len(children)} super entities in {file}")
                 for superentity in children:
-                    print(f"Reached {superentity['type']}")
+                    print(f"Reached {superentity['type']} in {file}")
                     # Create super entity
                     super_entity_id = client.query('createSuperEntity', {'file_id': file_id, 'entity_type': superentity['type'], 'start_byte': superentity['start_byte'], 'end_byte': superentity['end_byte'], 'order': superentity['order'], 'text': superentity['text']})[0]['entity'][0]['id']
                     
@@ -104,29 +98,113 @@ def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, 
                     del superentity
 
                 del children
+                return True
             else:
                 print(f'Failed to parse file: {file}')
-                del tree
-                del code
+                if tree is not None:
+                    del tree
+                if code is not None:
+                    del code
+                return False
         else:
             print(f'Not python file: {file}')
+            return False
+    except Exception as e:
+        print(f"Error processing file {file}: {e}")
+        return False
 
+def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, root_dir=None):
+    dir_dict = scan_directory(full_path, gitignore_specs, root_dir)
+    
+    # Extract gitignore specs and root_dir if they were returned by scan_directory
+    gitignore_specs = dir_dict.get("gitignore_specs", gitignore_specs)
+    root_dir = dir_dict.get("root_dir", root_dir)
+
+    print(f'Processing {len(dir_dict["folders"])} folders')
+    
+    # Store futures for parallel folder processing
+    folder_futures = []
+    folder_ids = {}
+    
+    # First create all folder entries
+    for folder in dir_dict["folders"]:
+        print(f"Reached {folder}")
+        if curr_type == 'root':
+            # Create super folder
+            folder_id = client.query('createSuperFolder', {'root_id': parent_id, 'name': folder})[0]['folder'][0]['id']
+        else:
+            # Create sub folder
+            folder_id = client.query('createSubFolder', {'folder_id': parent_id, 'name': folder})[0]['subfolder'][0]['id']
+            
+        folder_ids[folder] = folder_id
+        
+        # Submit folder processing to thread pool for parallel execution
+        folder_path = os.path.join(full_path, folder)
+        folder_futures.append(executor.submit(
+            populate, 
+            folder_path, 
+            'folder', 
+            folder_id, 
+            gitignore_specs, 
+            root_dir
+        ))
+
+    # Process files in parallel
+    print(f'Processing {len(dir_dict["files"])} files')
+    
+    # Filter out ignored files
+    files_to_process = [file for file in dir_dict["files"] 
+                      if not is_ignored(os.path.join(full_path, file), gitignore_specs, root_dir)]
+    
+    # Submit file processing tasks to the thread pool
+    file_futures = []
+    for file in files_to_process:
+        print(f"Submitting {file} for processing")
+        file_futures.append(executor.submit(
+            process_file,
+            file,
+            full_path,
+            curr_type,
+            parent_id
+        ))
+    
+    # Wait for all file processing to complete
+    for future in file_futures:
+        try:
+            success = future.result()
+        except Exception as e:
+            print(f"Error in file processing: {e}")
+    
+    # Wait for all folder processing to complete
+    for future in folder_futures:
+        try:
+            future.result()
+        except Exception as e:
+            print(f"Error in folder processing: {e}")
+    
     del dir_dict
 
 def process_entities(parent_dict, parent_id):
     children = parent_dict['children']
-    for entity in children:
-        # Create sub entity
-        entity_id = client.query('createSubEntity', {'entity_id': parent_id, 'entity_type': entity['type'], 'start_byte': entity['start_byte'], 'end_byte': entity['end_byte'], 'order': entity['order'], 'text': entity['text']})[0]['entity'][0]['id']
-        
-        # Recursively process sub entities in the entity
+    payload = [{'entity_id': parent_id, 'entity_type': entity['type'], 'start_byte': entity['start_byte'], 'end_byte': entity['end_byte'], 'order': entity['order'], 'text': entity['text']} for entity in children]
+    if len(payload) < 1:
+        return
+    entity_ids = [entity['entity'][0]['id'] for entity in client.query('createSubEntity', payload)]
+    for entity_id, entity in zip(entity_ids, children):
         process_entities(entity, entity_id)
 
 def parse_file(file_path, parser):
     try:
         with open(file_path, 'rb') as file:
             source_code = file.read()
-
+            
+        # Calculate file hash to avoid re-parsing identical files
+        file_hash = hashlib.sha1(source_code).hexdigest()
+        if file_hash in seen_files:
+            print(f"Skipping already processed file with same content: {file_path}")
+            return None, None
+            
+        seen_files.add(file_hash)
         return parser.parse(source_code), source_code
     except Exception as e:
         print(f"Error parsing {file_path}: {e}")
@@ -142,9 +220,59 @@ def node_to_dict(node, source_code, order:int=1):
         "children": [node_to_dict(child, source_code, i+1) for i, child in enumerate(node.children)]
     }
 
+# Cache for PathSpec objects to avoid rebuilding them
+_spec_cache = {}
+
+def get_spec(patterns):
+    """Get a cached PathSpec object for the given patterns."""
+    if not patterns:
+        return None
+        
+    # Create a hash key from the patterns
+    key = hashlib.sha1("\n".join(patterns).encode()).hexdigest()
+    
+    # Return cached spec if available
+    if key not in _spec_cache:
+        _spec_cache[key] = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    
+    return _spec_cache[key]
+
+def get_spec_for_path(path, gitignore_specs):
+    """Get or create a PathSpec for a specific directory path."""
+    # Use absolute path as the key
+    abs_path = os.path.abspath(path) if not os.path.isabs(path) else path
+    
+    # Return cached spec if available
+    if abs_path in spec_map:
+        return spec_map[abs_path]
+    
+    # Check for a .gitignore file in the current directory
+    local_gitignore = os.path.join(abs_path, '.gitignore')
+    
+    # Start with a copy of the existing specs
+    path_specs = dict(gitignore_specs) if gitignore_specs else {}
+    
+    # Add the local .gitignore if it exists and hasn't been processed
+    if os.path.isfile(local_gitignore) and abs_path not in path_specs:
+        try:
+            with open(local_gitignore, 'r') as f:
+                patterns = f.read().splitlines()
+                # Filter out empty lines and comments
+                patterns = [p for p in patterns if p and not p.startswith('#')]
+                if patterns:
+                    path_specs[abs_path] = get_spec(patterns)
+        except Exception as e:
+            print(f"Error reading {local_gitignore}: {e}")
+    
+    # Cache the result
+    spec_map[abs_path] = path_specs
+    
+    return path_specs
+
 def load_gitignore_specs(root_path):
     """Load gitignore specs from all .gitignore files in the given path and its parent directories."""
     specs = {}
+    pattern_lists = {}
     
     # Ensure we're working with absolute paths
     root_path = os.path.abspath(root_path)
@@ -153,9 +281,18 @@ def load_gitignore_specs(root_path):
     current_path = root_path
     root_dir = os.path.dirname(current_path) if os.path.isfile(current_path) else current_path
     
+    # Add default patterns to always ignore (like .git/)
+    if DEFAULT_IGNORE_PATTERNS:
+        # Use a special key for default patterns
+        default_key = "DEFAULT"
+        specs[default_key] = get_spec(DEFAULT_IGNORE_PATTERNS)
+        pattern_lists[default_key] = DEFAULT_IGNORE_PATTERNS
+    
     # Get all parent .gitignore files up to the filesystem root
     while current_path:
         gitignore_path = os.path.join(current_path, '.gitignore')
+        
+        # Check if file exists before trying to read it
         if os.path.isfile(gitignore_path):
             try:
                 with open(gitignore_path, 'r') as f:
@@ -164,7 +301,8 @@ def load_gitignore_specs(root_path):
                     patterns = [p for p in patterns if p and not p.startswith('#')]
                     if patterns:
                         print(f"Found .gitignore at {current_path} with patterns: {patterns}")
-                        specs[current_path] = pathspec.PathSpec.from_lines('gitwildmatch', patterns)
+                        pattern_lists[current_path] = patterns
+                        specs[current_path] = get_spec(patterns)
             except Exception as e:
                 print(f"Error reading {gitignore_path}: {e}")
         
@@ -176,51 +314,78 @@ def load_gitignore_specs(root_path):
     
     return specs, root_dir
 
-def is_ignored(path, gitignore_specs):
+def is_ignored(path, gitignore_specs, root_dir):
+    """Check if a path is ignored by any gitignore spec."""
     if not gitignore_specs:
         return False
     
-    # Ensure path is absolute
-    abs_path = os.path.abspath(path)
+    # Use the provided path without resolving again if it's already absolute
+    if os.path.isabs(path):
+        abs_path = path
+    else:
+        abs_path = os.path.abspath(path)
     
-    # For debugging
+    # For debugging and pattern matching
     basename = os.path.basename(abs_path)
     
+    # Special case for default patterns (always check first)
+    if "DEFAULT" in gitignore_specs:
+        # Get the relative path from the root directory
+        rel_path = os.path.relpath(abs_path, root_dir)
+        
+        # Check if the path matches any default pattern
+        if gitignore_specs["DEFAULT"].match_file(rel_path) or gitignore_specs["DEFAULT"].match_file(basename):
+            # print(f"Ignoring {abs_path} due to default ignore pattern")
+            return True
+    
     # Check each spec, starting from the most specific (closest to the file)
-    for dir_path, spec in sorted(gitignore_specs.items(), key=lambda x: len(x[0]), reverse=True):
-        try:
-            # Ensure both paths are absolute before comparing
-            abs_dir_path = os.path.abspath(dir_path)
+    for dir_path, spec in sorted(gitignore_specs.items(), key=lambda x: len(x[0]) if x[0] != "DEFAULT" else 0, reverse=True):
+        # Skip the default patterns as we've already checked them
+        if dir_path == "DEFAULT":
+            continue
             
+        try:
+            # Skip unnecessary path resolution - just use the paths directly for comparison
             # Only apply specs from directories that are parents of the path
-            if os.path.commonpath([abs_dir_path, abs_path]) == abs_dir_path:
-                # Get the relative path from the gitignore directory
-                rel_path = os.path.relpath(abs_path, abs_dir_path)
-                
-                # Check if the path matches any pattern in the spec
-                if spec.match_file(rel_path):
-                    # print(f"Ignoring {abs_path} due to pattern in {dir_path}/.gitignore")
-                    return True
-                
-                # Also check just the basename for directory patterns like "test_folder/"
-                if basename and spec.match_file(basename):
-                    # print(f"Ignoring {abs_path} due to basename match in {dir_path}/.gitignore")
-                    return True
-                
-                # Special handling for directory patterns like "test_folder/"
-                if os.path.isdir(abs_path):
-                    # Try with trailing slash
-                    dir_pattern = f"{basename}/"
-                    if spec.match_file(dir_pattern):
-                        # print(f"Ignoring directory {abs_path} due to pattern {dir_pattern} in {dir_path}/.gitignore")
+            try:
+                # For directory paths, ensure they're absolute for comparison
+                if os.path.isabs(dir_path):
+                    abs_dir_path = dir_path
+                else:
+                    abs_dir_path = os.path.abspath(dir_path)
+                    
+                if os.path.commonpath([abs_dir_path, abs_path]) == abs_dir_path:
+                    # Get the relative path from the gitignore directory - no need to resolve again
+                    rel_path = os.path.relpath(abs_path, abs_dir_path)
+                    
+                    # Check if the path matches any pattern in the spec
+                    if spec.match_file(rel_path):
+                        # print(f"Ignoring {abs_path} due to pattern in {dir_path}/.gitignore")
                         return True
-        except ValueError:
-            # Skip if paths can't be compared
+                    
+                    # Also check just the basename for directory patterns like "test_folder/"
+                    if basename and spec.match_file(basename):
+                        # print(f"Ignoring {abs_path} due to basename match in {dir_path}/.gitignore")
+                        return True
+                    
+                    # Special handling for directory patterns like "test_folder/"
+                    if os.path.isdir(abs_path):
+                        # Try with trailing slash
+                        dir_pattern = f"{basename}/"
+                        if spec.match_file(dir_pattern):
+                            # print(f"Ignoring directory {abs_path} due to pattern {dir_pattern} in {dir_path}/.gitignore")
+                            return True
+            except ValueError:
+                # Skip if paths can't be compared (different drives, etc.)
+                continue
+        except Exception as e:
+            print(f"Error checking if {path} is ignored: {e}")
             continue
     
     return False
 
 def scan_directory(root_path, gitignore_specs=None, root_dir=None):
+    """Scan a directory and return folders and files, respecting gitignore rules."""
     folders = []
     files = []
     
@@ -232,47 +397,31 @@ def scan_directory(root_path, gitignore_specs=None, root_dir=None):
         gitignore_specs, root_dir = load_gitignore_specs(root_path)
         print(f"Loaded gitignore specs from {len(gitignore_specs)} files")
         for path in gitignore_specs:
-            print(f"  - {path}/.gitignore")
+            if path != "DEFAULT":
+                print(f"  - {path}/.gitignore")
     
     # Check if the directory itself is ignored
-    if is_ignored(root_path, gitignore_specs):
+    if is_ignored(root_path, gitignore_specs, root_dir):
         print(f"Directory {root_path} is ignored by gitignore rules")
-        return {"folders": [], "files": [], "gitignore_specs": gitignore_specs, "root_dir": root_dir}
+        return {"folders": [], "files": []}
     
-    # Check for a .gitignore file in the current directory
-    local_gitignore = os.path.join(root_path, '.gitignore')
-    if os.path.isfile(local_gitignore):
-        # Check if this specific path is already in gitignore_specs
-        if root_path not in gitignore_specs:
-            try:
-                with open(local_gitignore, 'r') as f:
-                    patterns = f.read().splitlines()
-                    # Filter out empty lines and comments
-                    patterns = [p for p in patterns if p and not p.startswith('#')]
-                    if patterns:
-                        gitignore_specs[root_path] = pathspec.PathSpec.from_lines('gitwildmatch', patterns)
-            except Exception as e:
-                print(f"Error reading {local_gitignore}: {e}")
+    # Get or update gitignore specs for this path
+    gitignore_specs = get_spec_for_path(root_path, gitignore_specs)
     
-    for entry in os.listdir(root_path):
-        full_path = os.path.join(root_path, entry)
-        
-        # Skip if the path is ignored by gitignore rules
-        if is_ignored(full_path, gitignore_specs):
-            print(f"Skipping {entry} as it's ignored by gitignore rules")
+    # Use os.scandir for more efficient directory iteration
+    # This avoids extra stat calls compared to os.listdir + os.path.isdir
+    for entry in os.scandir(root_path):
+        # Skip ignored files and folders
+        if is_ignored(entry.path, gitignore_specs, root_dir):
+            print(f"Skipping {entry.name} as it's ignored by gitignore rules")
             continue
-            
-        if os.path.isdir(full_path):
-            folders.append(entry)
-        elif os.path.isfile(full_path):
-            files.append(entry)
+        
+        if entry.is_dir():
+            folders.append(entry.name)
+        else:
+            files.append(entry.name)
     
-    return {
-        "folders": folders,
-        "files": files,
-        "gitignore_specs": gitignore_specs,
-        "root_dir": root_dir
-    }
+    return {"folders": folders, "files": files, "gitignore_specs": gitignore_specs, "root_dir": root_dir}
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="HelixDB Codebase Ingestion")
