@@ -20,7 +20,7 @@ py_parser = Parser(PY_LANGUAGE)
 js_parser = Parser(JS_LANGUAGE)
 
 # Maximum depth of sub entities to process
-MAX_DEPTH = 2
+MAX_DEPTH = 50
 
 # HelixDB Instance
 instance = Instance()
@@ -193,42 +193,21 @@ def process_file(file, full_path, curr_type, parent_id):
         return False
 
 def process_entities(parent_dict, parent_id, step = 0):
-    if step == MAX_DEPTH:
-        return
+    if step < MAX_DEPTH and 'children' in parent_dict and len(parent_dict['children']) > 0:
 
-    children = parent_dict['children']
-    payload = [{'entity_id': parent_id, 'entity_type': entity['type'], 'start_byte': entity['start_byte'], 'end_byte': entity['end_byte'], 'order': entity['order'], 'text': entity['text']} for entity in children]
-    
-    if len(payload) < 1:
-        return
-    entity_ids = [entity['entity'][0]['id'] for entity in client.query('createSubEntity', payload)]
-    del payload
-    
-    # Only use parallel processing if we have enough entities and we're not too deep
-    if len(entity_ids) > 3:
-        # Process entities in parallel
-        futures = []
-        for i in range(len(entity_ids)):
-            futures.append(executor.submit(
-                process_entities, 
-                children[i], 
-                entity_ids[i], 
-                step + 1
-            ))
+        children = parent_dict['children']
+        payload = [{'entity_id': parent_id, 'entity_type': entity['type'], 'start_byte': entity['start_byte'], 'end_byte': entity['end_byte'], 'order': entity['order'], 'text': entity['text']} for entity in children]
         
-        # Wait for all entity processing to complete
-        for future in futures:
-            try:
-                future.result()
-            except Exception as e:
-                print(f"Error in parallel entity processing: {e}")
-    else:
-        # Process entities sequentially for small batches or deep nesting
+        if len(payload) < 1:
+            return
+        entity_ids = [entity['entity'][0]['id'] for entity in client.query('createSubEntity', payload)]
+        del payload
+
         for i in range(len(entity_ids)):
             process_entities(children[i], entity_ids[i], step + 1)
 
-    del children
-    del entity_ids
+        del children
+        del entity_ids
 
 def parse_file(file_path, parser):
     try:
