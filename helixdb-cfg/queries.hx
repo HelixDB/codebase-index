@@ -17,15 +17,15 @@ QUERY createSubFolder(folder_id: ID, name: String) =>
     RETURN subfolder
 
 // Create Files
-QUERY createSuperFile(root_id: ID, name: String, text: String) => 
+QUERY createSuperFile(root_id: ID, name: String, extension: String, text: String) => 
     root <- N<Root>(root_id)
-    file <- AddN<File>({name:name, text:text})
+    file <- AddN<File>({name:name, extension:extension, text:text})
     AddE<Root_to_File>()::From(root)::To(file)
     RETURN file
 
-QUERY createFile(folder_id: ID, name: String, text: String) => 
+QUERY createFile(folder_id: ID, name: String, extension: String, text: String) => 
     folder <- N<Folder>(folder_id)
-    file <- AddN<File>({name:name, text:text})
+    file <- AddN<File>({name:name, extension:extension, text:text})
     AddE<Folder_to_File>()::From(folder)::To(file)
     RETURN file
 

@@ -10,6 +10,7 @@ N::Folder {
 
 N::File {
     name: String,
+    extension: String,
     text: String,
     extracted_at: Date DEFAULT NOW
 }

@@ -18,13 +18,12 @@ const MAX_DEPTH: usize = 2;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let root_path = PathBuf::from("sample").canonicalize()?;
-    let port = 6969;
+    let path = "sample";
+    ingestion(PathBuf::from(path).canonicalize()?, 6969).await
+}
 
-    println!(
-        "Starting ingestion for directory: {}",
-        root_path.display()
-    );
+pub async fn ingestion(root_path: PathBuf, port: u16) -> Result<()> {
+    println!("Starting ingestion for directory: {}", root_path.display());
 
     let root_name = root_path.file_name().unwrap().to_str().unwrap();
     let url = format!("http://localhost:{}/createRoot", port);
@@ -37,7 +36,7 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Root ID not found"))?;
 
-    println!("Root created");
+    println!("\nRoot created");
 
     let semaphore = Arc::new(Semaphore::new(10));
 
@@ -50,7 +49,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    println!("Ingestion finished");
+    println!("\nIngestion finished");
     Ok(())
 }
 
@@ -99,7 +98,7 @@ fn populate(
                         json!({ "name": folder_name, "folder_id": parent_id_clone })
                     };
 
-                    println!("Submitting {} folder for processing", folder_name);
+                    println!("\nSubmitting {} folder for processing", folder_name);
 
                     if let Ok(res) = post_request(&url, payload).await {
                         if let Some(folder_id) = res.get("folder").and_then(|f| f.get(0)).and_then(|v| v.get("id")).and_then(|v| v.as_str()) {
@@ -130,6 +129,8 @@ async fn process_file(
     port: u16,
 ) -> Result<()> {
     let source_code = fs::read_to_string(&file_path).await?;
+    let file_name = file_path.file_name().unwrap().to_str().unwrap();
+    let extension = file_path.extension().and_then(|s| s.to_str()).unwrap();
 
     if let Some(language) = get_language(&file_path) {
         let mut parser = Parser::new();
@@ -137,29 +138,36 @@ async fn process_file(
         let tree = parser.parse(&source_code, None).unwrap();
         let tree_dict = extract_entities_recursive(tree.root_node(), &source_code);
 
-        let file_name = file_path.file_name().unwrap().to_str().unwrap();
         let endpoint = if is_super { "createSuperFile" } else { "createFile" };
         let url = format!("http://localhost:{}/{}", port, endpoint);
 
         let file_type = if is_super { "super" } else { "sub" };
-        println!("Processing {} file: {}", file_type, file_name);
+        println!("\nProcessing {} file: {}", file_type, file_name);
 
         let payload = if is_super {
-            json!({ "name": file_name, "root_id": parent_id, "text": source_code })
+            json!({ "name": file_name, "extension": extension, "root_id": parent_id, "text": source_code })
         } else {
-            json!({ "name": file_name, "folder_id": parent_id, "text": source_code })
+            json!({ "name": file_name, "extension": extension, "folder_id": parent_id, "text": source_code })
         };
 
         let file_response = post_request(&url, payload).await?;
         let file_id = file_response.get("file").and_then(|f| f.get(0)).and_then(|v| v.get("id")).and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
 
-        println!("Processing {} super entities from file {}", tree_dict.len(), file_name);
+        println!("\nProcessing {} super entities from file {}", tree_dict.len(), file_name);
         for entity in tree_dict.into_iter() {
             process_entity(entity, file_id.to_string(), port, true, 0).await?;
         }
     } else {
-        println!("Ignored: {}", file_path.display());
+        let endpoint = if is_super { "createSuperFile" } else { "createFile" };
+        let url = format!("http://localhost:{}/{}", port, endpoint);
+        let payload = if is_super {
+            json!({ "name": file_name, "extension": extension, "root_id": parent_id, "text": source_code })
+        } else {
+            json!({ "name": file_name, "extension": extension, "folder_id": parent_id, "text": source_code })
+        };
+        post_request(&url, payload).await?;
+        println!("\nProcessing unsupported file: {}", file_name);
     }
     Ok(())
 }
