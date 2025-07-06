@@ -27,7 +27,7 @@ instance = Instance()
 time.sleep(1)
 
 # HelixDB Client
-client = Client(local=True, verbose=True)
+client = Client(local=True, verbose=False)
 
 # Thread pool for parallel processing
 MAX_WORKERS = min(os.cpu_count()//2, 8)
@@ -141,6 +141,7 @@ def process_file(file, full_path, curr_type, parent_id):
         if parser is not None:
             # Extract python code structure with tree-sitter
             file_path = os.path.join(full_path, file)
+            extension = file.split('.')[-1]
             tree, code = parse_file(file_path, parser)
 
             if tree:
@@ -150,10 +151,10 @@ def process_file(file, full_path, curr_type, parent_id):
 
                 if curr_type == 'root':
                     # Create super file
-                    file_id = client.query('createSuperFile', {'root_id': parent_id, 'name': file, 'text': tree_dict['text']})[0]['file'][0]['id']
+                    file_id = client.query('createSuperFile', {'root_id': parent_id, 'name': file, 'extension': extension, 'text': tree_dict['text']})[0]['file'][0]['id']
                 else:
                     # Create sub file
-                    file_id = client.query('createFile', {'folder_id': parent_id, 'name': file, 'text': tree_dict['text']})[0]['file'][0]['id']
+                    file_id = client.query('createFile', {'folder_id': parent_id, 'name': file, 'extension': extension, 'text': tree_dict['text']})[0]['file'][0]['id']
 
                 children = tree_dict['children']
                 del tree_dict
