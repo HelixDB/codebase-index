@@ -71,7 +71,6 @@ def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, 
     
     # Store futures for parallel folder processing
     folder_futures = []
-    folder_ids = {}
     
     # First create all folder entries
     for folder in dir_dict["folders"]:
@@ -82,8 +81,6 @@ def populate(full_path, curr_type='root', parent_id=None, gitignore_specs=None, 
         else:
             # Create sub folder
             folder_id = client.query('createSubFolder', {'folder_id': parent_id, 'name': folder})[0]['subfolder'][0]['id']
-            
-        folder_ids[folder] = folder_id
         
         # Submit folder processing to thread pool for parallel execution
         folder_path = os.path.join(full_path, folder)
