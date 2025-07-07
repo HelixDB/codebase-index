@@ -5,7 +5,7 @@ use tree_sitter::{Node};
 
 // Chunk entity text
 // TODO: Replace with actual chunking function
-pub async fn chunk_entity(text: &str) -> Vec<&str> {
+pub fn chunk_entity(text: &str) -> Vec<&str> {
     text.as_bytes()
         .chunks(1000)
         .map(std::str::from_utf8)
@@ -15,27 +15,31 @@ pub async fn chunk_entity(text: &str) -> Vec<&str> {
 
 // Embed entity text
 // TODO: Replace with actual embedding function
-pub async fn embed_entity(_text: &str) -> Vec<f64> {
+pub fn embed_entity(_text: &str) -> Vec<f64> {
     vec![0.1; 768]
 }
 
 // Send POST request to Helix instance
-pub async fn post_request(url: &str, body: Value) -> Result<Value> {
-    let client = reqwest::Client::new();
-    let res = client.post(url).json(&body).send().await?;
+pub fn post_request(url: &str, body: Value) -> Result<Value> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(1))
+        .build()?;
+    
+    let res = match client.post(url).json(&body).send() {
+        Ok(response) => {
+            response
+        },
+        Err(e) => {
+            if e.is_timeout() {
+                println!("Request timed out. Check if the server is running and responding.");
+            } else if e.is_connect() {
+                println!("Connection failed. Make sure the server is running at {}", url);
+            }
+            return Err(anyhow::anyhow!("HTTP request failed: {}", e));
+        }
+    };
 
-    if res.status().is_success() {
-        let json_res = res.json::<Value>().await?;
-        Ok(json_res)
-    } else {
-        let status = res.status();
-        let error_body = res.text().await?;
-        Err(anyhow::anyhow!(
-            "API request failed with status {}: {}",
-            status,
-            error_body
-        ))
-    }
+    Ok(res.json::<Value>()?)
 }
 
 // Get language from file extension
