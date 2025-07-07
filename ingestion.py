@@ -20,7 +20,7 @@ py_parser = Parser(PY_LANGUAGE)
 js_parser = Parser(JS_LANGUAGE)
 
 # Maximum depth of sub entities to process
-MAX_DEPTH = 50
+MAX_DEPTH = 2
 
 # HelixDB Instance
 instance = Instance()

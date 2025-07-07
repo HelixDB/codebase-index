@@ -5,7 +5,7 @@ use anyhow::Result;
 use ignore::WalkBuilder;
 use serde_json::json;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::fs;
 use parking_lot::Mutex;
 use std::thread;
@@ -46,13 +46,19 @@ fn main() -> Result<()> {
     // Start the ingestion process
     ingestion(PathBuf::from(path).canonicalize()?, port, max_depth, concur_limit)?;
     
-    // Add a delay to allow background threads to complete
+    // Wait for all background threads to complete
     println!("\nWaiting for background tasks to complete...");
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    while ACTIVE_THREADS.load(Ordering::SeqCst) > 0 {
+        // Poll the counter every 100ms
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     
     println!("\nIngestion finished in {} seconds", start_time.elapsed().as_secs_f64());
     Ok(())
 }
+
+// Global thread counter to track active background threads
+static ACTIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
 
 pub fn ingestion(root_path: PathBuf, port: u16, max_depth: usize, _concur_limit: usize) -> Result<()> {
     println!("Starting ingestion for directory: {}", root_path.display());
@@ -74,7 +80,7 @@ pub fn ingestion(root_path: PathBuf, port: u16, max_depth: usize, _concur_limit:
     println!("\nRoot created");
 
     // Create a mutex to limit concurrency
-    let semaphore = Arc::new(Mutex::new(()));
+    let semaphore = Arc::new(Mutex::new(_concur_limit));
 
     // Start populating the index with directory contents
     populate(root_path, root_id.to_string(), port, semaphore, true, max_depth)?;
@@ -88,7 +94,7 @@ fn populate(
     current_path: PathBuf,
     parent_id: String,
     port: u16,
-    semaphore: Arc<Mutex<()>>,
+    semaphore: Arc<Mutex<usize>>,
     is_super: bool,
     max_depth: usize,
 ) -> Result<()> {    
@@ -144,7 +150,6 @@ fn populate(
                 match post_request(&url, payload) {
                     Ok(res) => {
                         if let Some(folder_id) = res.get("folder").and_then(|f| f.get(0)).and_then(|v| v.get("id")).and_then(|v| v.as_str()) {
-                            println!("Successfully created folder: {} with ID: {}", folder_name, folder_id);
                             
                             // Recursively populate the folder
                             let inner_semaphore = Arc::clone(&semaphore_clone);
@@ -155,8 +160,20 @@ fn populate(
                             // Release the lock before spawning the new thread
                             drop(_guard);
                             
+                            // Increment thread counter before spawning
+                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                            
                             // Spawn a new thread for the recursive call
                             thread::spawn(move || {
+                                // Use a guard to ensure counter is decremented when thread exits
+                                struct ThreadGuard;
+                                impl Drop for ThreadGuard {
+                                    fn drop(&mut self) {
+                                        ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                                    }
+                                }
+                                let _guard = ThreadGuard;
+                                
                                 println!("Starting recursive processing of folder: {}", folder_name_clone);
                                 if let Err(e) = populate(path_buf_clone, folder_id_string, port, inner_semaphore, false, max_depth) {
                                     eprintln!("Error populating folder {}: {}", folder_name_clone, e);
@@ -179,8 +196,20 @@ fn populate(
                 // Release the lock before processing the file
                 drop(_guard); // Explicitly drop the guard to release the lock
                 
+                // Increment thread counter before spawning
+                ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                
                 // Process the file in a separate thread
                 thread::spawn(move || {
+                    // Use a guard to ensure counter is decremented when thread exits
+                    struct ThreadGuard;
+                    impl Drop for ThreadGuard {
+                        fn drop(&mut self) {
+                            ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    }
+                    let _guard = ThreadGuard;
+                    
                     println!("Processing file: {}", path_buf_clone.display());
                     process_file(path_buf_clone, parent_id_clone2, is_super, port, max_depth).ok();
                 });
