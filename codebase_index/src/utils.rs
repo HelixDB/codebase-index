@@ -1,7 +1,6 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
-use tree_sitter::{Node};
 
 // Chunk entity text
 // TODO: Replace with actual chunking function
@@ -53,32 +52,11 @@ pub fn get_language(file_path: &Path) -> Option<tree_sitter::Language> {
 }
 
 // Code entity struct
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct CodeEntity {
     pub entity_type: String,
     pub start_byte: usize,
     pub end_byte: usize,
     pub order: usize,
-    pub text: String,
-    pub children: Vec<CodeEntity>,
-}
-
-// Extract code entities recursively
-pub fn extract_entities_recursive(node: Node, source_code: &str) -> Vec<CodeEntity> {
-    let mut entities = Vec::new();
-    let mut order = 1;
-    for child in node.children(&mut node.walk()) {
-        let grandchildren = extract_entities_recursive(child, source_code);
-        entities.push(CodeEntity {
-            entity_type: child.kind().to_string(),
-            start_byte: child.start_byte(),
-            end_byte: child.end_byte(),
-            order,
-            text: source_code[child.start_byte()..child.end_byte()].to_string(),
-            children: grandchildren,
-        });
-
-        order += 1;
-    }
-    entities
+    pub text: String
 }

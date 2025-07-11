@@ -10,6 +10,7 @@ use std::fs;
 use parking_lot::Mutex;
 use std::thread;
 use tree_sitter::Parser;
+use tree_sitter::{Node};
 use std::time::Instant;
 use std::env;
 
@@ -17,7 +18,6 @@ use std::env;
 use utils::{
     chunk_entity,
     embed_entity,
-    extract_entities_recursive,
     get_language,
     post_request,
     CodeEntity
@@ -34,11 +34,16 @@ fn main() -> Result<()> {
     // Parse command line arguments with defaults
     let args: Vec<String> = env::args().collect();
 
+    // Get current directory
+    let default_port = 6969;
+    let max_depth = 2;
+    let max_concur = 10;
+
     // Get arguments
     let path:String = if args.len() > 1 {args[1].clone()} else {"sample".to_string()};
-    let port:u16 = if args.len() > 2 {args[2].parse::<u16>().unwrap()} else {6969};
-    let max_depth:usize = if args.len() > 3 {args[3].parse::<usize>().unwrap()} else {2};
-    let concur_limit:usize = if args.len() > 4 {args[4].parse::<usize>().unwrap()} else {10};
+    let port:u16 = if args.len() > 2 {args[2].parse::<u16>().unwrap()} else {default_port};
+    let max_depth:usize = if args.len() > 3 {args[3].parse::<usize>().unwrap()} else {max_depth};
+    let concur_limit:usize = if args.len() > 4 {args[4].parse::<usize>().unwrap()} else {max_concur};
     
     println!("\nConnecting to Helix instance at port {}", port);
     let start_time = Instant::now();
@@ -85,7 +90,6 @@ pub fn ingestion(root_path: PathBuf, port: u16, max_depth: usize, _concur_limit:
     // Start populating the index with directory contents
     populate(root_path, root_id.to_string(), port, semaphore, true, max_depth)?;
 
-    println!("\nIngestion finished");
     Ok(())
 }
 
@@ -174,7 +178,6 @@ fn populate(
                                 }
                                 let _guard = ThreadGuard;
                                 
-                                println!("Starting recursive processing of folder: {}", folder_name_clone);
                                 if let Err(e) = populate(path_buf_clone, folder_id_string, port, inner_semaphore, false, max_depth) {
                                     eprintln!("Error populating folder {}: {}", folder_name_clone, e);
                                 }
@@ -210,7 +213,6 @@ fn populate(
                     }
                     let _guard = ThreadGuard;
                     
-                    println!("Processing file: {}", path_buf_clone.display());
                     process_file(path_buf_clone, parent_id_clone2, is_super, port, max_depth).ok();
                 });
             }
@@ -246,7 +248,6 @@ fn process_file(
         let mut parser = Parser::new();
         parser.set_language(language)?;
         let tree = parser.parse(&source_code, None).unwrap();
-        let tree_dict = extract_entities_recursive(tree.root_node(), &source_code);
 
         // Create file
         let file_type = if is_super { "super" } else { "sub" };
@@ -280,9 +281,14 @@ fn process_file(
             })?;
 
         // Process entities
-        println!("\nProcessing {} super entities from file {}", tree_dict.len(), file_name);
-        for entity in tree_dict.into_iter() {
-            process_entity(entity, file_id.to_string(), port, true, 0, max_depth)?;
+        let root_node = tree.root_node();
+        let mut binding = root_node.walk();
+        let children = root_node.children(&mut binding);
+        println!("\nProcessing {} super entities from file {}", children.len(), file_name);
+        let mut order = 1;
+        for entity in children.into_iter() {
+            process_entity(entity, &source_code, file_id.to_string(), port, true, order, 0, max_depth)?;
+            order += 1;
         }
     // File is not supported by Tree Sitter
     } else {
@@ -304,33 +310,43 @@ fn process_file(
 
 /// Processes an entity and its children recursively
 fn process_entity(
-    entity: CodeEntity,
+    entity: Node,
+    source_code: &str,
     parent_id: String,
     port: u16,
     is_super: bool,
+    order: usize,
     depth: usize,
     max_depth: usize,
 ) -> Result<()> {
     // Create entity
+    let code_entity = CodeEntity {
+        entity_type: entity.kind().to_string(),
+        start_byte: entity.start_byte(),
+        end_byte: entity.end_byte(),
+        order,
+        text: source_code[entity.start_byte()..entity.end_byte()].to_string()
+    };
+
     let endpoint = if is_super { "createSuperEntity" } else { "createSubEntity" };
     let url = format!("http://localhost:{}/{}", port, endpoint);
     let payload = if is_super {
             json!({
                 "file_id": parent_id,
-                "entity_type": entity.entity_type,
-                "text": entity.text,
-                "start_byte": entity.start_byte,
-                "end_byte": entity.end_byte,
-                "order": entity.order,
+                "entity_type": code_entity.entity_type,
+                "text": code_entity.text,
+                "start_byte": code_entity.start_byte,
+                "end_byte": code_entity.end_byte,
+                "order": code_entity.order,
             })
         } else {
             json!({
                 "entity_id": parent_id,
-                "entity_type": entity.entity_type,
-                "text": entity.text,
-                "start_byte": entity.start_byte,
-                "end_byte": entity.end_byte,
-                "order": entity.order,
+                "entity_type": code_entity.entity_type,
+                "text": code_entity.text,
+                "start_byte": code_entity.start_byte,
+                "end_byte": code_entity.end_byte,
+                "order": code_entity.order,
             })
         };
 
@@ -345,7 +361,7 @@ fn process_entity(
     // Embed entity if super entity
     if is_super {
         // Chunk entity text
-        let chunks = chunk_entity(&entity.text);
+        let chunks = chunk_entity(&code_entity.text);
 
         // Embed each chunk
         for chunk in chunks {
@@ -361,9 +377,14 @@ fn process_entity(
     }
 
     // Recursively process children of entity not at max depth
-    if depth < max_depth && !entity.children.is_empty() {
-        for child in entity.children.into_iter() {
-            process_entity(child, entity_id.to_string(), port, false, depth + 1, max_depth)?;
+    let mut binding = entity.walk();
+    let children = entity.children(&mut binding);
+    let len = children.len();
+    if depth < max_depth && len > 0 {
+        let mut order = 1;
+        for child in children.into_iter() {
+            process_entity(child, &source_code, entity_id.to_string(), port, false, order, depth + 1, max_depth)?;
+            order += 1;
         }
     }
     
