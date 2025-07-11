@@ -108,7 +108,8 @@ QUERY getEntityFile(entity_id: ID) =>
 
 QUERY searchSuperEntity(vector: [F64], k: I64) => 
     vectors <- SearchV<EmbededCode>(vector, k)
-    RETURN vectors
+    entity <- vectors::In<Entity_to_EmbededCode>
+    RETURN entity
 
 QUERY getSubEntities(entity_id: ID) => 
     entities <- N<Entity>(entity_id)::Out<Entity_to_Entity>
