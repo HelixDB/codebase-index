@@ -6,8 +6,8 @@ This is a codebase ingestion script for HelixDB. It uses tree-sitter to parse py
 
 ### Python Environment
 It is recommended to create a new virtual environment for this repository. After creating a virtual environment, you can install the required packages:
-```python
-pip install -r requirements.txt
+```bash
+uv sync
 ```
 
 ### Installing the Helix CLI

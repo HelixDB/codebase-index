@@ -1,0 +1,12 @@
+[project]
+name = "codebase-ingestion"
+version = "0.1.0"
+description = "Codebase ingestion"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "pathspec",
+]
