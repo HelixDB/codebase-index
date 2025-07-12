@@ -1,0 +1,21 @@
+{
+    "py" :[
+        "module",
+        "block",
+        "_compound_statement",
+        "class_definition",
+        "decorated_definition",
+        "for_statement",
+        "function_definition",
+        "if_statement",
+        "match_statement",
+        "try_statement",
+        "while_statement",
+        "with_statement",
+        "_simple_statement",
+        "expression",
+        "parameter",
+        "pattern",
+        "primary_expression"
+    ]
+}
