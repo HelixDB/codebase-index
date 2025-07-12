@@ -464,10 +464,7 @@ fn process_entity(
         if let Some(types) = index_types.get(&extension) {
             if let Some(types_array) = types.as_array() {
                 let entity_type = &code_entity.entity_type;
-                if types_array
-                    .iter()
-                    .any(|v| v.as_str().map_or(false, |s| s == entity_type))
-                {
+                if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity_type)) || types_array.iter().any(|v| v.as_str().map_or(false, |s| s == "ALL")) {
                     let endpoint = if is_super {
                         "createSuperEntity"
                     } else {
@@ -507,6 +504,8 @@ fn process_entity(
                         // Chunk entity text
                         let chunks = chunk_entity(&code_entity.text).unwrap();
                         println!("chunks length: {}", chunks.len());
+                        println!("Chunking entity: {}", code_entity.text);
+
                         // Embed each chunk
                         for chunk in chunks {
                             let embedding = embed_entity(chunk).unwrap();
@@ -521,7 +520,7 @@ fn process_entity(
                     }
 
                     // Recursively process children of entity not at max depth
-                    if depth < max_depth && len > 0 {
+                    if len > 0 {
                         let mut order = 1;
                         for child in children.into_iter() {
                             process_entity(

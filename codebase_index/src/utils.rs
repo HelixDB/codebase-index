@@ -74,6 +74,7 @@ pub fn get_language(file_path: &Path) -> Option<tree_sitter::Language> {
     match extension {
         Some("py") => Some(tree_sitter_python::language()),
         Some("js") => Some(tree_sitter_javascript::language()),
+        Some("rs") => Some(tree_sitter_rust::language()),
         _ => None,
     }
 }
