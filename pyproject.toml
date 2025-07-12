@@ -11,4 +11,6 @@ dependencies = [
     "pathspec",
     "dotenv>=0.9.9",
     "fastmcp>=2.10.5",
+    "helix-py>=0.2.21",
+    "google-genai>=1.25.0",
 ]

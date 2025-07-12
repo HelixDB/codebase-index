@@ -10,6 +10,11 @@ It is recommended to create a new virtual environment for this repository. After
 uv sync
 ```
 
+or pip to install the dependencies:
+```bash
+pip install -r requirements.txt
+```
+
 ### Installing the Helix CLI
 ```bash
 curl -sSL "https://install.helix-db.com" | bash
