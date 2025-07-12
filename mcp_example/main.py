@@ -19,14 +19,41 @@ async def main():
         "http://localhost:8000/mcp/",
         # auth=BearerAuth(TOKEN)
     )
+
+    prompt = "im super duper confused, what parser languages are in ingestion.py?"
+
     async with mcp_client:
         response = await gemini_client.aio.models.generate_content_stream(
             model="gemini-2.5-flash-lite-preview-06-17",
             # query below:
-            contents="",
+            contents=prompt,
             config=genai.types.GenerateContentConfig(
                 # system prompt below:
-                system_instruction="""""",
+                system_instruction="""
+                You are a helpful assistant that can answer questions about the codebase. Please use the tools provided to answer the question.
+                
+                Available endpoints:
+                getRoot - Parameters: None - Returns the root node of the codebase
+                getFolderRoot - Parameters: `folder_id` (string) - Returns the root node of a specific folder
+                getFileRoot - Parameters: `file_id` (string) - Returns the root node of a specific file
+                getFolder - Parameters: `folder_id` (string) - Returns a specific folder
+                getRootFolders - Parameters: `root_id` (string) - Returns the folders under a root
+                getSuperFolders - Parameters: `folder_id` (string) - Returns the parent folders of a folder
+                getSubFolders - Parameters: `folder_id` (string) - Returns the subfolders of a folder
+                getFileFolder - Parameters: `file_id` (string) - Returns the folder containing a file
+                getFile - Parameters: `file_id` (string) - Returns a specific file
+                getRootFiles - Parameters: `root_id` (string) - Returns the files under a root
+                getFolderFiles - Parameters: `folder_id` (string) - Returns the files in a folder
+                getFileEntities - Parameters: `file_id` (string) - Returns the entities in a file
+                getEntityFile - Parameters: `entity_id` (string) - Returns the file containing an entity
+                getSubEntities - Parameters: `entity_id` (string) - Returns the child entities of an entity
+                getSuperEntity - Parameters: `entity_id` (string) - Returns the parent entity of an entity
+
+                **For Semantic Searches:**
+                For example queries like: "what are the functions in ingestion.py?" you should use the semantic_search_code tool.
+                - `semantic_search_code` - Parameters: `query` (string), `k` (integer, optional, default=5) - Returns the entities by embedding vector
+
+                """,
                 temperature=0.2,
                 tools=[mcp_client.session],
             ),

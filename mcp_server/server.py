@@ -48,7 +48,7 @@ ALLOWED_ENDPOINTS = {
     "getSuperEntity"
 }
 
-def extract_endpoints_with_types(file_path: str = "helixdb-cfg/queries.hx") -> Dict[str, Dict[str, type]]:
+def extract_endpoints_with_types(file_path: str = "../helixdb-cfg/queries.hx") -> Dict[str, Dict[str, type]]:
     type_map = {
         'String': str,
         'ID': str, 
@@ -134,14 +134,24 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
     Perform semantic search to find code entities with content similar to the query.
     This combines embedding generation and similarity search in one step.
     """
+
     result = gemini_client.models.embed_content(
         model="gemini-embedding-exp-03-07",
         contents=query,
-        config=genai.types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"))
-    
+        config=genai.types.EmbedContentConfig(task_type="CODE_RETRIEVAL_QUERY"))
+    print(result)
     query_vector = result.embeddings[0].values
-    return db.query("searchSuperEntity", 
+    answer = db.query("searchSuperEntity", 
                    {"vector": query_vector, "k": k})
+    #print length of answer
+    print(len(answer[0]['entity']))
+    for entity in answer[0]['entity']:
+        print(entity['text'])
+        print("--------------------------------")
+        print("--------------------------------")
+        print("--------------------------------")
+        print("--------------------------------")
+    return answer
 
 if __name__ == "__main__":#
     PORT = os.getenv("PORT", 8000)

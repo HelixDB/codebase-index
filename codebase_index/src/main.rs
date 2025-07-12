@@ -3,28 +3,26 @@ mod utils;
 // External crates
 use anyhow::Result;
 use ignore::WalkBuilder;
-use serde_json::json;
-use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-use std::fs;
 use parking_lot::Mutex;
-use std::thread;
-use tree_sitter::Parser;
-use tree_sitter::{Node};
-use std::time::Instant;
+use reqwest::header::CONTENT_LENGTH;
+use serde_json::json;
 use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::Instant;
+use tree_sitter::Node;
+use tree_sitter::Parser;
 
 // Internal utility functions
-use utils::{
-    chunk_entity,
-    embed_entity,
-    get_language,
-    post_request,
-    CodeEntity
-};
+use utils::{chunk_entity, embed_entity, get_language, post_request, CodeEntity};
 
 /// Main entry point for the codebase ingestion tool
-/// 
+///
 /// # Arguments (command line)
 /// 1. path: Directory path to index (default: "sample")
 /// 2. port: Port number for Helix server (default: 6969)
@@ -40,39 +38,68 @@ fn main() -> Result<()> {
     let max_concur = 10;
 
     // Get arguments
-    let path:String = if args.len() > 1 {args[1].clone()} else {"sample".to_string()};
-    let port:u16 = if args.len() > 2 {args[2].parse::<u16>().unwrap()} else {default_port};
-    let max_depth:usize = if args.len() > 3 {args[3].parse::<usize>().unwrap()} else {max_depth};
-    let concur_limit:usize = if args.len() > 4 {args[4].parse::<usize>().unwrap()} else {max_concur};
-    
+    let path: String = if args.len() > 1 {
+        args[1].clone()
+    } else {
+        "sample".to_string()
+    };
+    let port: u16 = if args.len() > 2 {
+        args[2].parse::<u16>().unwrap()
+    } else {
+        default_port
+    };
+    let max_depth: usize = if args.len() > 3 {
+        args[3].parse::<usize>().unwrap()
+    } else {
+        max_depth
+    };
+    let concur_limit: usize = if args.len() > 4 {
+        args[4].parse::<usize>().unwrap()
+    } else {
+        max_concur
+    };
+
     println!("\nConnecting to Helix instance at port {}", port);
     let start_time = Instant::now();
-    
+
     // Start the ingestion process
-    ingestion(PathBuf::from(path).canonicalize()?, port, max_depth, concur_limit)?;
-    
+    ingestion(
+        PathBuf::from(path).canonicalize()?,
+        port,
+        max_depth,
+        concur_limit,
+    )?;
+
     // Wait for all background threads to complete
     println!("\nWaiting for background tasks to complete...");
     while ACTIVE_THREADS.load(Ordering::SeqCst) > 0 {
         // Poll the counter every 100ms
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    
-    println!("\nIngestion finished in {} seconds", start_time.elapsed().as_secs_f64());
+
+    println!(
+        "\nIngestion finished in {} seconds",
+        start_time.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
 // Global thread counter to track active background threads
 static ACTIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
 
-pub fn ingestion(root_path: PathBuf, port: u16, max_depth: usize, _concur_limit: usize) -> Result<()> {
+pub fn ingestion(
+    root_path: PathBuf,
+    port: u16,
+    max_depth: usize,
+    _concur_limit: usize,
+) -> Result<()> {
     println!("Starting ingestion for directory: {}", root_path.display());
 
     // Create a root entry in the index
     let root_name = root_path.file_name().unwrap().to_str().unwrap();
     let url = format!("http://localhost:{}/createRoot", port);
     let payload = json!({ "name": root_name });
-    
+
     // Send request to create root and get its ID
     let root_response = post_request(&url, payload)?;
     let root_id = root_response
@@ -92,7 +119,15 @@ pub fn ingestion(root_path: PathBuf, port: u16, max_depth: usize, _concur_limit:
     let semaphore = Arc::new(Mutex::new(_concur_limit));
 
     // Start populating the index with directory contents
-    populate(root_path, root_id.to_string(), port, semaphore, true, max_depth, index_types)?;
+    populate(
+        root_path,
+        root_id.to_string(),
+        port,
+        semaphore,
+        true,
+        max_depth,
+        index_types,
+    )?;
 
     Ok(())
 }
@@ -106,7 +141,7 @@ fn populate(
     is_super: bool,
     max_depth: usize,
     index_types: Arc<serde_json::Value>,
-) -> Result<()> {    
+) -> Result<()> {
     // Initialize tasks and walker builder
     let mut handles = Vec::new();
     let mut walker_builder = WalkBuilder::new(&current_path);
@@ -147,7 +182,11 @@ fn populate(
             if path_buf.is_dir() {
                 // Get folder information
                 let folder_name = path_buf.file_name().unwrap().to_str().unwrap();
-                let endpoint = if is_super { "createSuperFolder" } else { "createSubFolder" };
+                let endpoint = if is_super {
+                    "createSuperFolder"
+                } else {
+                    "createSubFolder"
+                };
                 let url = format!("http://localhost:{}/{}", port, endpoint);
                 let payload = if is_super {
                     json!({ "name": folder_name, "root_id": parent_id_clone })
@@ -159,21 +198,24 @@ fn populate(
                 println!("\nSubmitting {} folder for processing", folder_name);
                 match post_request(&url, payload) {
                     Ok(res) => {
-                        if let Some(folder_id) = res.get("folder").and_then(|v| v.get("id")).and_then(|v| v.as_str()) {
-                            
+                        if let Some(folder_id) = res
+                            .get("folder")
+                            .and_then(|v| v.get("id"))
+                            .and_then(|v| v.as_str())
+                        {
                             // Recursively populate the folder
                             let inner_semaphore = Arc::clone(&semaphore_clone);
                             let path_buf_clone = path_buf.clone();
                             let folder_id_string = folder_id.to_string();
                             let folder_name_clone = folder_name.to_string();
                             let index_types_inner = Arc::clone(&index_types_clone);
-                            
+
                             // Release the lock before spawning the new thread
                             drop(_guard);
-                            
+
                             // Increment thread counter before spawning
                             ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                            
+
                             // Spawn a new thread for the recursive call
                             thread::spawn(move || {
                                 // Use a guard to ensure counter is decremented when thread exits
@@ -184,15 +226,29 @@ fn populate(
                                     }
                                 }
                                 let _guard = ThreadGuard;
-                                
-                                if let Err(e) = populate(path_buf_clone, folder_id_string, port, inner_semaphore, false, max_depth, index_types_inner) {
-                                    eprintln!("Error populating folder {}: {}", folder_name_clone, e);
+
+                                if let Err(e) = populate(
+                                    path_buf_clone,
+                                    folder_id_string,
+                                    port,
+                                    inner_semaphore,
+                                    false,
+                                    max_depth,
+                                    index_types_inner,
+                                ) {
+                                    eprintln!(
+                                        "Error populating folder {}: {}",
+                                        folder_name_clone, e
+                                    );
                                 }
                             });
                         } else {
-                            eprintln!("Failed to extract folder ID from response for: {}", folder_name);
+                            eprintln!(
+                                "Failed to extract folder ID from response for: {}",
+                                folder_name
+                            );
                         }
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Failed to create folder {}: {}", folder_name, e);
                     }
@@ -203,13 +259,13 @@ fn populate(
                 let path_buf_clone = path_buf.clone();
                 let parent_id_clone2 = parent_id_clone.clone();
                 let index_types_inner = Arc::clone(&index_types_clone);
-                
+
                 // Release the lock before processing the file
                 drop(_guard); // Explicitly drop the guard to release the lock
-                
+
                 // Increment thread counter before spawning
                 ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                
+
                 // Process the file in a separate thread
                 thread::spawn(move || {
                     // Use a guard to ensure counter is decremented when thread exits
@@ -220,8 +276,16 @@ fn populate(
                         }
                     }
                     let _guard = ThreadGuard;
-                    
-                    process_file(path_buf_clone, parent_id_clone2, is_super, port, max_depth, index_types_inner).ok();
+
+                    process_file(
+                        path_buf_clone,
+                        parent_id_clone2,
+                        is_super,
+                        port,
+                        max_depth,
+                        index_types_inner,
+                    )
+                    .ok();
                 });
             }
             Ok::<(), anyhow::Error>(())
@@ -249,7 +313,10 @@ fn process_file(
     // Read file contents
     let source_code = fs::read_to_string(&file_path)?;
     let file_name = file_path.file_name().unwrap().to_str().unwrap();
-    let extension = file_path.extension().and_then(|s| s.to_str()).unwrap_or("txt");
+    let extension = file_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("txt");
 
     // Parse file with Tree Sitter
     if let Some(language) = get_language(&file_path) {
@@ -260,7 +327,11 @@ fn process_file(
 
         // Create file
         let file_type = if is_super { "super" } else { "sub" };
-        let endpoint = if is_super { "createSuperFile" } else { "createFile" };
+        let endpoint = if is_super {
+            "createSuperFile"
+        } else {
+            "createFile"
+        };
         let url = format!("http://localhost:{}/{}", port, endpoint);
         let payload = if is_super {
             json!({ "name": file_name, "extension": extension, "root_id": parent_id, "text": source_code })
@@ -274,13 +345,19 @@ fn process_file(
             Ok(response) => response,
             Err(e) => {
                 eprintln!("Failed to create file {}: {}", file_name, e);
-                eprintln!("This could indicate that the Helix server is not running or not responding.");
-                eprintln!("Check that the server is running at http://localhost:{}", port);
+                eprintln!(
+                    "This could indicate that the Helix server is not running or not responding."
+                );
+                eprintln!(
+                    "Check that the server is running at http://localhost:{}",
+                    port
+                );
                 return Err(anyhow::anyhow!("Failed to create file: {}", e));
             }
         };
-        
-        let file_id = file_response.get("file")
+
+        let file_id = file_response
+            .get("file")
             .and_then(|v| v.get("id"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
@@ -292,16 +369,35 @@ fn process_file(
         let root_node = tree.root_node();
         let mut binding = root_node.walk();
         let children = root_node.children(&mut binding);
-        println!("\nProcessing {} super entities from file {}", children.len(), file_name);
+        println!(
+            "\nProcessing {} super entities from file {}",
+            children.len(),
+            file_name
+        );
         let mut order = 1;
         for entity in children.into_iter() {
-            process_entity(entity, &source_code, file_id.to_string(), port, true, order, 0, max_depth, extension.to_string(), Arc::clone(&index_types))?;
+            process_entity(
+                entity,
+                &source_code,
+                file_id.to_string(),
+                port,
+                true,
+                order,
+                0,
+                max_depth,
+                extension.to_string(),
+                Arc::clone(&index_types),
+            )?;
             order += 1;
         }
     // File is not supported by Tree Sitter
     } else {
         // Create file without entities
-        let endpoint = if is_super { "createSuperFile" } else { "createFile" };
+        let endpoint = if is_super {
+            "createSuperFile"
+        } else {
+            "createFile"
+        };
         let url = format!("http://localhost:{}/{}", port, endpoint);
         let payload = if is_super {
             json!({ "name": file_name, "extension": extension, "root_id": parent_id, "text": source_code })
@@ -335,7 +431,7 @@ fn process_entity(
         start_byte: entity.start_byte(),
         end_byte: entity.end_byte(),
         order,
-        text: source_code[entity.start_byte()..entity.end_byte()].to_string()
+        text: source_code[entity.start_byte()..entity.end_byte()].to_string(),
     };
     let mut binding = entity.walk();
     let children = entity.children(&mut binding);
@@ -347,7 +443,18 @@ fn process_entity(
         if depth < max_depth && len > 0 {
             let mut order = 1;
             for child in children.into_iter() {
-                process_entity(child, &source_code, parent_id.to_string(), port, false, order, depth + 1, max_depth, extension.clone(), Arc::clone(&index_types))?;
+                process_entity(
+                    child,
+                    &source_code,
+                    parent_id.to_string(),
+                    port,
+                    false,
+                    order,
+                    depth + 1,
+                    max_depth,
+                    extension.clone(),
+                    Arc::clone(&index_types),
+                )?;
                 order += 1;
             }
         }
@@ -357,33 +464,40 @@ fn process_entity(
         if let Some(types) = index_types.get(&extension) {
             if let Some(types_array) = types.as_array() {
                 let entity_type = &code_entity.entity_type;
-                if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity_type)) {
-                    println!("Entity type: {}", entity_type);
-                    let endpoint = if is_super { "createSuperEntity" } else { "createSubEntity" };
+                if types_array
+                    .iter()
+                    .any(|v| v.as_str().map_or(false, |s| s == entity_type))
+                {
+                    let endpoint = if is_super {
+                        "createSuperEntity"
+                    } else {
+                        "createSubEntity"
+                    };
                     let url = format!("http://localhost:{}/{}", port, endpoint);
                     let payload = if is_super {
-                            json!({
-                                "file_id": parent_id,
-                                "entity_type": code_entity.entity_type,
-                                "text": code_entity.text,
-                                "start_byte": code_entity.start_byte,
-                                "end_byte": code_entity.end_byte,
-                                "order": code_entity.order,
-                            })
-                        } else {
-                            json!({
-                                "entity_id": parent_id,
-                                "entity_type": code_entity.entity_type,
-                                "text": code_entity.text,
-                                "start_byte": code_entity.start_byte,
-                                "end_byte": code_entity.end_byte,
-                                "order": code_entity.order,
-                            })
-                        };
+                        json!({
+                            "file_id": parent_id,
+                            "entity_type": code_entity.entity_type,
+                            "text": code_entity.text,
+                            "start_byte": code_entity.start_byte,
+                            "end_byte": code_entity.end_byte,
+                            "order": code_entity.order,
+                        })
+                    } else {
+                        json!({
+                            "entity_id": parent_id,
+                            "entity_type": code_entity.entity_type,
+                            "text": code_entity.text,
+                            "start_byte": code_entity.start_byte,
+                            "end_byte": code_entity.end_byte,
+                            "order": code_entity.order,
+                        })
+                    };
 
                     // Send request to create entity
                     let entity_response = post_request(&url, payload)?;
-                    let entity_id = entity_response.get("entity")
+                    let entity_id = entity_response
+                        .get("entity")
                         .and_then(|v| v.get("id"))
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| anyhow::anyhow!("Entity ID not found"))?;
@@ -391,11 +505,11 @@ fn process_entity(
                     // Embed entity if super entity
                     if is_super {
                         // Chunk entity text
-                        let chunks = chunk_entity(&code_entity.text);
-
+                        let chunks = chunk_entity(&code_entity.text).unwrap();
+                        println!("chunks length: {}", chunks.len());
                         // Embed each chunk
                         for chunk in chunks {
-                            let embedding = embed_entity(chunk);
+                            let embedding = embed_entity(chunk).unwrap();
                             let embed_endpoint = "embedSuperEntity";
                             let payload = json!({
                                 "entity_id": entity_id,
@@ -410,7 +524,18 @@ fn process_entity(
                     if depth < max_depth && len > 0 {
                         let mut order = 1;
                         for child in children.into_iter() {
-                            process_entity(child, &source_code, entity_id.to_string(), port, false, order, depth + 1, max_depth, extension.clone(), Arc::clone(&index_types))?;
+                            process_entity(
+                                child,
+                                &source_code,
+                                entity_id.to_string(),
+                                port,
+                                false,
+                                order,
+                                depth + 1,
+                                max_depth,
+                                extension.clone(),
+                                Arc::clone(&index_types),
+                            )?;
                             order += 1;
                         }
                     }
@@ -418,6 +543,6 @@ fn process_entity(
             }
         }
     }
-    
+
     Ok(())
 }
