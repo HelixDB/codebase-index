@@ -16,6 +16,9 @@
         "expression",
         "parameter",
         "pattern",
-        "primary_expression"
+        "primary_expression",
+        "import_from_statement",
+        "future_import_statement",
+        "import_statement"
     ]
 }
