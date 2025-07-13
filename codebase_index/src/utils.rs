@@ -21,11 +21,11 @@ pub fn embed_entity(text: String) -> Result<Vec<f64>> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(1))
         .build()?;
-    let res = client.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-exp-03-07:embedContent")
+    let res = client.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent")
         .header("x-goog-api-key", env::var("GEMINI_API_KEY").unwrap())
         .header("Content-Type", "application/json")
         .json(&json!({
-            "model": "models/gemini-embedding-exp-03-07",
+            "model": "models/text-embedding-004",
             "content": {
                 "parts": [{
                     "text": text,

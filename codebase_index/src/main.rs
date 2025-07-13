@@ -375,7 +375,74 @@ fn process_file(
             file_name
         );
         let mut order = 1;
+        let mut super_start_byte: Option<usize> = None;
+        let mut super_end_byte: Option<usize> = None;
         for entity in children.into_iter() {
+            println!("Processing entity: {}", entity.kind().to_string());
+            // Get index_types for file extension
+            if let Some(types) = index_types.get(&extension) {
+                if let Some(types_array) = types.as_array() {
+                    // Check if ALL is not in index_types
+                    if types_array.iter().any(|v| v.as_str().map_or(false, |s| s != "ALL")) {
+                        // Super entity type in index_types
+                        if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity.kind().to_string())){
+                            // Has super content (need to create super entity and embed before processing current super entity)
+                            if super_start_byte.is_some() {
+                                // Embed super content
+                                let super_content = &source_code[super_start_byte.unwrap()..super_end_byte.unwrap()].to_string();
+                                // println!("Embedding super content: \n{}", super_content);
+
+                                let endpoint = "createSuperEntity";
+                                let url = format!("http://localhost:{}/{}", port, endpoint);
+                                let payload = json!({
+                                    "file_id": file_id.to_string(),
+                                    "entity_type": "super_code",
+                                    "text": super_content,
+                                    "start_byte": super_start_byte.unwrap(),
+                                    "end_byte": super_end_byte.unwrap(),
+                                    "order": order,
+                                });
+
+                                order += 1;
+                                
+                                let entity_response = post_request(&url, payload)?;
+                                let entity_id = entity_response
+                                    .get("entity")
+                                    .and_then(|v| v.get("id"))
+                                    .and_then(|v| v.as_str())
+                                    .ok_or_else(|| anyhow::anyhow!("Entity ID not found"))?;
+
+                                // Chunk entity text
+                                let chunks = chunk_entity(&super_content).unwrap();
+                                println!("chunks length: {}", chunks.len());
+
+                                // Embed each chunk
+                                for chunk in chunks {
+                                    let embedding = embed_entity(chunk).unwrap();
+                                    let embed_endpoint = "embedSuperEntity";
+                                    let payload = json!({
+                                        "entity_id": entity_id,
+                                        "vector": embedding,
+                                    });
+                                    let embed_url = format!("http://localhost:{}/{}", port, embed_endpoint);
+                                    post_request(&embed_url, payload)?;
+                                }
+
+                                super_start_byte = None;
+                                super_end_byte = None;
+                            }
+                        // Super entity type not in index_types
+                        } else {
+                            // Update super_start_byte and super_end_byte
+                            if super_start_byte.is_none(){
+                                super_start_byte = Some(entity.start_byte());
+                            }
+                            super_end_byte = Some(entity.end_byte());
+                            // println!("Added Content: \n{}", &source_code[entity.start_byte()..entity.end_byte()]);
+                        }
+                    }
+                }
+            }
             process_entity(
                 entity,
                 &source_code,
@@ -504,7 +571,7 @@ fn process_entity(
                         // Chunk entity text
                         let chunks = chunk_entity(&code_entity.text).unwrap();
                         println!("chunks length: {}", chunks.len());
-                        println!("Chunking entity: {}", code_entity.text);
+                        // println!("Chunking entity: {}", code_entity.text);
 
                         // Embed each chunk
                         for chunk in chunks {
