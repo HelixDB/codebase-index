@@ -43,7 +43,6 @@ ALLOWED_ENDPOINTS = {
     "getFolderFiles",
     "getFileEntities",
     "getEntityFile",
-    "searchSuperEntity",
     "getSubEntities",
     "getSuperEntity"
 }
@@ -99,10 +98,13 @@ def do_query(endpoint: str, payload: Dict[str, Any]) -> List[Any]:
     getFolderFiles - Get files in a folder
     getFileEntities - Get entities in a file
     getEntityFile - Get file containing an entity
-    searchSuperEntity - Search entities by embedding vector
     getSubEntities - Get child entities of an entity
     getSuperEntity - Get parent entity of an entity
     Payload is type-checked before execution.
+
+    Args:
+        endpoint (str): The endpoint to query.
+        payload (dict): The payload to pass to the endpoint.
     """
     # Check if endpoint is allowed
     if endpoint not in ALLOWED_ENDPOINTS:
@@ -133,6 +135,10 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
     """
     Perform semantic search to find code entities with content similar to the query.
     This combines embedding generation and similarity search in one step.
+
+    Args:
+        query (str): The query to search for.
+        k (int): The number of results to return.
     """
 
     result = gemini_client.models.embed_content(

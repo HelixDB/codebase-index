@@ -20,10 +20,11 @@ async def main():
         # auth=BearerAuth(TOKEN)
     )
 
-    prompt = "first do semantic search to find all parameters of the function process_entity in RUST. you'll also get an ID back, use that ID to get the file name using the getEntityFile query, then use that id to check if it has a parent folder using the getFileFolder query, then check if it has a root using the getFileRoot query, then check if the parent folder has a root using the getFolderRoot query, finally tell me the name of the root folder"
+    with open('instructions.txt', 'r') as f:
+        system_prompt = f.read()
 
+    prompt = "What are the parameters of the function process_entity in RUST? What is its file name and parent folder name? Also, what is the root folder name?"
     
-
     async with mcp_client:
         response = await gemini_client.aio.models.generate_content_stream(
             model="gemini-2.5-flash",
@@ -31,31 +32,7 @@ async def main():
             contents=prompt,
             config=genai.types.GenerateContentConfig(
                 # system prompt below:
-                system_instruction="""
-                You are a helpful assistant that can answer questions about the codebase. Please use the tools provided to answer the question.
-                
-                Available endpoints:
-                getRoot - Parameters: None - Returns the root node of the codebase
-                getFolderRoot - Parameters: `folder_id` (string) - Returns the root node of a specific folder
-                getFileRoot - Parameters: `file_id` (string) - Returns the root node of a specific file
-                getFolder - Parameters: `folder_id` (string) - Returns a specific folder
-                getRootFolders - Parameters: `root_id` (string) - Returns the folders under a root
-                getSuperFolders - Parameters: `folder_id` (string) - Returns the parent folders of a folder
-                getSubFolders - Parameters: `folder_id` (string) - Returns the subfolders of a folder
-                getFileFolder - Parameters: `file_id` (string) - Returns the folder containing a file
-                getFile - Parameters: `file_id` (string) - Returns a specific file
-                getRootFiles - Parameters: `root_id` (string) - Returns the files under a root
-                getFolderFiles - Parameters: `folder_id` (string) - Returns the files in a folder
-                getFileEntities - Parameters: `file_id` (string) - Returns the entities in a file
-                getEntityFile - Parameters: `entity_id` (string) - Returns the file containing an entity
-                getSubEntities - Parameters: `entity_id` (string) - Returns the child entities of an entity
-                getSuperEntity - Parameters: `entity_id` (string) - Returns the parent entity of an entity
-
-                **For Semantic Searches:**
-                For example queries like: "what are the functions in ingestion.py?" you should use the semantic_search_code tool.
-                - `semantic_search_code` - Parameters: `query` (string), `k` (integer, optional, default=5) - Returns the entities by embedding vector
-
-                """,
+                system_instruction=system_prompt,
                 temperature=0.2,
                 tools=[mcp_client.session],
             ),
@@ -63,11 +40,16 @@ async def main():
         
         async for chunk in response:
             try:
-                for part in chunk.candidates[0].content.parts:
-                    if part.text:
-                        print(part.text, end="")
-            except IndexError:
-                pass
+                # Check if candidates exist and have content
+                if chunk.candidates and len(chunk.candidates) > 0 and chunk.candidates[0].content:
+                    for part in chunk.candidates[0].content.parts:
+                        if part.text:
+                            print(part.text, end="")
+                else:
+                    raise Exception(chunk.candidates[0].finish_reason)
+            except Exception as e:
+                print(f"Error processing chunk: {e}")
+
         print()
 
 
