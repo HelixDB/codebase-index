@@ -25,15 +25,13 @@ use utils::{chunk_entity, embed_entity, get_language, post_request, CodeEntity};
 /// # Arguments (command line)
 /// 1. path: Directory path to index (default: "sample")
 /// 2. port: Port number for Helix server (default: 6969)
-/// 3. max_depth: Maximum depth for entity processing (default: 2)
-/// 4. concur_limit: Maximum concurrent operations (default: 10)
+/// 3. concur_limit: Maximum concurrent operations (default: 10)
 fn main() -> Result<()> {
     // Parse command line arguments with defaults
     let args: Vec<String> = env::args().collect();
 
     // Get current directory
     let default_port = 6969;
-    let max_depth = 2;
     let max_concur = 10;
 
     // Get arguments
@@ -47,13 +45,8 @@ fn main() -> Result<()> {
     } else {
         default_port
     };
-    let max_depth: usize = if args.len() > 3 {
+    let concur_limit: usize = if args.len() > 3 {
         args[3].parse::<usize>().unwrap()
-    } else {
-        max_depth
-    };
-    let concur_limit: usize = if args.len() > 4 {
-        args[4].parse::<usize>().unwrap()
     } else {
         max_concur
     };
@@ -65,7 +58,6 @@ fn main() -> Result<()> {
     ingestion(
         PathBuf::from(path).canonicalize()?,
         port,
-        max_depth,
         concur_limit,
     )?;
 
@@ -89,7 +81,6 @@ static ACTIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
 pub fn ingestion(
     root_path: PathBuf,
     port: u16,
-    max_depth: usize,
     _concur_limit: usize,
 ) -> Result<()> {
     println!("Starting ingestion for directory: {}", root_path.display());
@@ -124,7 +115,6 @@ pub fn ingestion(
         port,
         semaphore,
         true,
-        max_depth,
         index_types,
     )?;
 
@@ -138,7 +128,6 @@ fn populate(
     port: u16,
     semaphore: Arc<Mutex<usize>>,
     is_super: bool,
-    max_depth: usize,
     index_types: Arc<serde_json::Value>,
 ) -> Result<()> {
     // Initialize tasks and walker builder
@@ -232,7 +221,6 @@ fn populate(
                                     port,
                                     inner_semaphore,
                                     false,
-                                    max_depth,
                                     index_types_inner,
                                 ) {
                                     eprintln!(
@@ -281,7 +269,6 @@ fn populate(
                         parent_id_clone2,
                         is_super,
                         port,
-                        max_depth,
                         index_types_inner,
                     )
                     .ok();
@@ -306,7 +293,6 @@ fn process_file(
     parent_id: String,
     is_super: bool,
     port: u16,
-    max_depth: usize,
     index_types: Arc<serde_json::Value>,
 ) -> Result<()> {
     // Read file contents
@@ -448,8 +434,6 @@ fn process_file(
                 port,
                 true,
                 order,
-                0,
-                max_depth,
                 extension.to_string(),
                 Arc::clone(&index_types),
             )?;
@@ -485,8 +469,6 @@ fn process_entity(
     port: u16,
     is_super: bool,
     order: usize,
-    depth: usize,
-    max_depth: usize,
     extension: String,
     index_types: Arc<serde_json::Value>,
 ) -> Result<()> {
@@ -504,8 +486,8 @@ fn process_entity(
 
     // Special case for Python
     if extension == "py" && code_entity.entity_type == "block" && len > 0 {
-        // Recursively process children of entity not at max depth
-        if depth < max_depth && len > 0 {
+        // Recursively process children of entity
+        if len > 0 {
             let mut order = 1;
             for child in children.into_iter() {
                 process_entity(
@@ -515,8 +497,6 @@ fn process_entity(
                     port,
                     false,
                     order,
-                    depth + 1,
-                    max_depth,
                     extension.clone(),
                     Arc::clone(&index_types),
                 )?;
@@ -584,7 +564,7 @@ fn process_entity(
                         }
                     }
 
-                    // Recursively process children of entity not at max depth
+                    // Recursively process children of entity
                     if len > 0 {
                         let mut order = 1;
                         for child in children.into_iter() {
@@ -595,8 +575,6 @@ fn process_entity(
                                 port,
                                 false,
                                 order,
-                                depth + 1,
-                                max_depth,
                                 extension.clone(),
                                 Arc::clone(&index_types),
                             )?;

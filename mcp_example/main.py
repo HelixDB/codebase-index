@@ -24,7 +24,10 @@ async def main():
         system_prompt = f.read()
 
     prompt = "What are the parameters of the function process_entity in RUST? What is its file name and parent folder name? Also, what is the root folder name?"
-    
+
+    print('User prompt: ', prompt)
+    print('LLM response: ')
+
     async with mcp_client:
         response = await gemini_client.aio.models.generate_content_stream(
             model="gemini-2.5-flash",
