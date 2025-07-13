@@ -72,9 +72,9 @@ pub fn post_request(url: &str, body: Value) -> Result<Value> {
 pub fn get_language(file_path: &Path) -> Option<tree_sitter::Language> {
     let extension = file_path.extension().and_then(|s| s.to_str());
     match extension {
-        Some("py") => Some(tree_sitter_python::language()),
-        Some("js") => Some(tree_sitter_javascript::language()),
-        Some("rs") => Some(tree_sitter_rust::language()),
+        Some("py") => Some(tree_sitter_python::LANGUAGE.into()),
+        Some("js") => Some(tree_sitter_javascript::LANGUAGE.into()),
+        Some("rs") => Some(tree_sitter_rust::LANGUAGE.into()),
         _ => None,
     }
 }

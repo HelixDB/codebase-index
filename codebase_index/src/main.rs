@@ -4,7 +4,6 @@ mod utils;
 use anyhow::Result;
 use ignore::WalkBuilder;
 use parking_lot::Mutex;
-use reqwest::header::CONTENT_LENGTH;
 use serde_json::json;
 use std::env;
 use std::fs;
@@ -322,7 +321,7 @@ fn process_file(
     if let Some(language) = get_language(&file_path) {
         // Parse file
         let mut parser = Parser::new();
-        parser.set_language(language)?;
+        parser.set_language(&language)?;
         let tree = parser.parse(&source_code, None).unwrap();
 
         // Create file
@@ -378,7 +377,6 @@ fn process_file(
         let mut super_start_byte: Option<usize> = None;
         let mut super_end_byte: Option<usize> = None;
         for entity in children.into_iter() {
-            println!("Processing entity: {}", entity.kind().to_string());
             // Get index_types for file extension
             if let Some(types) = index_types.get(&extension) {
                 if let Some(types_array) = types.as_array() {
@@ -390,7 +388,7 @@ fn process_file(
                             if super_start_byte.is_some() {
                                 // Embed super content
                                 let super_content = &source_code[super_start_byte.unwrap()..super_end_byte.unwrap()].to_string();
-                                // println!("Embedding super content: \n{}", super_content);
+                                println!("Embedding super content: \n{}", super_content);
 
                                 let endpoint = "createSuperEntity";
                                 let url = format!("http://localhost:{}/{}", port, endpoint);
