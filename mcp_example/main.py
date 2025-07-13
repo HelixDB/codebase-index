@@ -20,11 +20,13 @@ async def main():
         # auth=BearerAuth(TOKEN)
     )
 
-    prompt = "im super duper confused, what parser languages are in ingestion.py?"
+    prompt = "first do semantic search to find all parameters of the function process_entity in RUST. you'll also get an ID back, use that ID to get the file name using the getEntityFile query, then use that id to check if it has a parent folder using the getFileFolder query, then check if it has a root using the getFileRoot query, then check if the parent folder has a root using the getFolderRoot query, finally tell me the name of the root folder"
+
+    
 
     async with mcp_client:
         response = await gemini_client.aio.models.generate_content_stream(
-            model="gemini-2.5-flash-lite-preview-06-17",
+            model="gemini-2.5-flash",
             # query below:
             contents=prompt,
             config=genai.types.GenerateContentConfig(
@@ -60,7 +62,13 @@ async def main():
         )
         
         async for chunk in response:
-            print(chunk.text, end="")
+            try:
+                for part in chunk.candidates[0].content.parts:
+                    if part.text:
+                        print(part.text, end="")
+            except IndexError:
+                pass
+        print()
 
 
 if __name__ == "__main__":

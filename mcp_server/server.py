@@ -136,22 +136,12 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
     """
 
     result = gemini_client.models.embed_content(
-        model="gemini-embedding-exp-03-07",
+        model="models/text-embedding-004",
         contents=query,
-        config=genai.types.EmbedContentConfig(task_type="CODE_RETRIEVAL_QUERY"))
-    print(result)
+        config=genai.types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"))
+    
     query_vector = result.embeddings[0].values
-    answer = db.query("searchSuperEntity", 
-                   {"vector": query_vector, "k": k})
-    #print length of answer
-    print(len(answer[0]['entity']))
-    for entity in answer[0]['entity']:
-        print(entity['text'])
-        print("--------------------------------")
-        print("--------------------------------")
-        print("--------------------------------")
-        print("--------------------------------")
-    return answer
+    return db.query("searchSuperEntity", {"vector": query_vector, "k": k})
 
 if __name__ == "__main__":#
     PORT = os.getenv("PORT", 8000)
