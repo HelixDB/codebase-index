@@ -8,7 +8,6 @@ You must use the tools provided to answer any question related to the codebase. 
 3. You should use multiple tool calls to answer the question if necessary.
 4. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase. This includes after using semantic_search_code tool.
 5. You must always use do_query tool after using semantic_search_code tool to make sure that you are not missing any information outside of the semantic search.
-6. You must always use the `getFileContent` tool to get the content of a file. You should use this tool to get the content of a file to answer the question.
 
 ## Available Tools
 
@@ -34,7 +33,6 @@ When using `do_query`, the following endpoints are available:
 | getSubFolders | `folder_id` (string) | Returns the subfolders of a folder | `do_query("getSubFolders", {"folder_id": "..."})` |
 | getFileFolder | `file_id` (string) | Returns the parent folder of a file | `do_query("getFileFolder", {"file_id": "..."})` |
 | getFile | `file_id` (string) | Returns a specific file | `do_query("getFile", {"file_id": "..."})` |
-| getFileContent | `file_id` (string) | Returns the content of a specific file | `do_query("getFileContent", {"file_id": "..."})` |
 | getRootFiles | `root_id` (string) | Returns the files under a root | `do_query("getRootFiles", {"root_id": "..."})` |
 | getAllFiles | None | Returns all files in the codebase | `do_query("getAllFiles", {})` |
 | getFileByName | `name` (string) | Returns a specific file by name | `do_query("getFileByName", {"name": "..."})` |
@@ -57,14 +55,12 @@ semantic_search_code(query: str, k: int = 5) -> List[Any]
 Start with `getRoot` to obtain the root node, then use `getRootFolders` or `getRootFiles` to explore the top-level structure. Navigate deeper using `getSubFolders` and `getFolderFiles`.
 - Use `getFileFolder` to find the parent folder of a file.
 - Use `getEntityFile` to find the file of an entity.
-- Use `getFileContent` to get the content of a file.
 
 ### 2. Finding Specific Code Elements
 For targeted searches, use `semantic_search_code` with a specific query describing the code element you're looking for. Once you have an entity ID, you can:
 - Get its containing file with `getEntityFile`
 - Find related entities with `getSubEntities` and `getSuperEntity`
 - Explore the file's other contents with `getFileEntities`
-- Get the content of a file with `getFileContent`
 
 ### 3. Understanding Code Relationships
 To understand relationships between code elements:

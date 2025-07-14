@@ -3,17 +3,16 @@ import dotenv from 'dotenv';
 import { GoogleGenAI , mcpToTool } from "@google/genai";
 import * as fs from 'fs';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 dotenv.config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const geminiClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-const serverParams = new StdioClientTransport({
-    command: "uv", 
-    args: ["run", "./src/mcp/server.py"]
-  });
+const transport = new StreamableHTTPClientTransport(
+    new URL(`http://localhost:8000/mcp`),
+);
 
 const system_prompt = fs.readFileSync('./src/lib/instructions.txt', 'utf-8');
 
@@ -24,10 +23,10 @@ const mcp_client = new Client(
     }
   );
 
+await mcp_client.connect(transport);
+
 export async function POST(req: NextRequest) {
     const messagesData = await req.json();
-
-    await mcp_client.connect(serverParams);
     
     const formattedContents = messagesData.messages.map((msg: any) => ({
         role: msg.role === 'user' ? 'user' : 'model',
