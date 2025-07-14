@@ -31,3 +31,8 @@ export interface LLMStats {
 export interface ModelChatHistory {
   messages: Message[];
 }
+
+export interface msg {
+    role: 'user' | 'assistant';
+    content: string;
+}

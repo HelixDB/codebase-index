@@ -4,6 +4,7 @@ import { GoogleGenAI , mcpToTool } from "@google/genai";
 import * as fs from 'fs';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {msg} from "../../../lib/types";
 
 dotenv.config();
 
@@ -28,7 +29,7 @@ await mcp_client.connect(transport);
 export async function POST(req: NextRequest) {
     const messagesData = await req.json();
     
-    const formattedContents = messagesData.messages.map((msg: any) => ({
+    const formattedContents = messagesData.messages.map((msg: msg) => ({
         role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }]
     }));
@@ -64,6 +65,7 @@ export async function POST(req: NextRequest) {
                 'Transfer-Encoding': 'chunked'
             }
         });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
         console.error('API error:', error);
         return NextResponse.json({ error: error.message || 'Unknown error' }, { status: 500 });

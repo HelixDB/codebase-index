@@ -41,11 +41,7 @@ export default function MessageBubble({ message, isUser }: MessageBubbleProps) {
   const [displayContent, setDisplayContent] = useState<string>(message.content || '');
   const [isThinkingExpanded, setIsThinkingExpanded] = useState<boolean>(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
-  const names: string[] = [];
-  const types: string[] = [];
 
-  
-  
   // Reset the copied state after 2 seconds
   useEffect(() => {
     if (copiedCode) {
