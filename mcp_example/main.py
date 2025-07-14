@@ -23,14 +23,14 @@ async def main():
     with open('instructions.txt', 'r') as f:
         system_prompt = f.read()
 
-    prompt = "What are the parameters of the function process_entity in RUST? What is its file name and parent folder name? Also, what is the root folder name?"
+    prompt = "What are the commands for the helix cli?"
 
     print('User prompt: ', prompt)
     print('LLM response: ')
 
     async with mcp_client:
         response = await gemini_client.aio.models.generate_content_stream(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-pro",
             # query below:
             contents=prompt,
             config=genai.types.GenerateContentConfig(

@@ -13,4 +13,5 @@ dependencies = [
     "fastmcp>=2.10.5",
     "helix-py>=0.2.21",
     "google-genai>=1.25.0",
+    "tree-sitter-rust==0.23.2",
 ]

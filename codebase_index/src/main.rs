@@ -32,7 +32,7 @@ fn main() -> Result<()> {
 
     // Get current directory
     let default_port = 6969;
-    let max_concur = 10;
+    let max_concur = 20;
 
     // Get arguments
     let path: String = if args.len() > 1 {
