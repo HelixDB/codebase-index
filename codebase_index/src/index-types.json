@@ -68,5 +68,8 @@
         "while_expression",
         "_pattern",
         "_type"
+    ],
+    "zig": [
+        "ALL"
     ]
 }
