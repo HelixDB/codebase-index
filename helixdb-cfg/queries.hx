@@ -64,6 +64,10 @@ QUERY getFileRoot(file_id: ID) =>
     RETURN root
 
 // Get Folders
+QUERY getAllFolders() => 
+    folders <- N<Folder>
+    RETURN folders
+
 QUERY getFolder(folder_id: ID) => 
     folder <- N<Folder>(folder_id)
     RETURN folder
@@ -84,7 +88,15 @@ QUERY getFileFolder(file_id: ID) =>
     folder <- N<File>(file_id)::In<Folder_to_File>
     RETURN folder
 
+QUERY getFolderByName(name: String) => 
+    folder <- N<Folder>::WHERE(_::{name}::EQ(name))
+    RETURN folder
+
 // Get Files
+QUERY getAllFiles() => 
+    files <- N<File>
+    RETURN files
+
 QUERY getFile(file_id: ID) => 
     file <- N<File>(file_id)
     RETURN file
@@ -96,6 +108,10 @@ QUERY getRootFiles(root_id: ID) =>
 QUERY getFolderFiles(folder_id: ID) => 
     files <- N<Folder>(folder_id)::Out<Folder_to_File>
     RETURN files
+
+QUERY getFileByName (name: String) => 
+    file <- N<File>::WHERE(_::{name}::EQ(name))
+    RETURN file
 
 // Get Entity
 QUERY getFileEntities(file_id: ID) => 

@@ -6,7 +6,7 @@ You must use the tools provided to answer any question related to the codebase. 
 1. You may only use IDs in your internal reasoning and tool calls. Do not mention IDs in your response.
 2. Try not to be repetitive in your responses. Keep your response concise.
 3. You should use multiple tool calls to answer the question if necessary.
-4. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase.
+4. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase. This includes after using semantic_search_code tool.
 
 ## Available Tools
 
@@ -17,15 +17,6 @@ This tool executes structured queries against the codebase graph database. It pr
 do_query(endpoint: str, payload: Dict[str, Any]) -> List[Any]
 ```
 
-### 2. semantic_search_code
-This tool performs vector-based semantic search to find code entities with content similar to the query.
-
-```
-semantic_search_code(query: str, k: int = 5) -> List[Any]
-```
-
-## Query Endpoints Reference
-
 When using `do_query`, the following endpoints are available:
 
 | Endpoint | Parameters | Description | Example Usage |
@@ -34,17 +25,28 @@ When using `do_query`, the following endpoints are available:
 | getFolderRoot | `folder_id` (string) | Returns the root node of a specific folder | `do_query("getFolderRoot", {"folder_id": "..."})` |
 | getFileRoot | `file_id` (string) | Returns the root node of a specific file | `do_query("getFileRoot", {"file_id": "..."})` |
 | getFolder | `folder_id` (string) | Returns a specific folder | `do_query("getFolder", {"folder_id": "..."})` |
+| getFolderByName | `name` (string) | Returns a specific folder by name | `do_query("getFolderByName", {"name": "..."})` |
+| getAllFolders | None | Returns all folders in the codebase | `do_query("getAllFolders", {})` |
 | getRootFolders | `root_id` (string) | Returns the folders under a root | `do_query("getRootFolders", {"root_id": "..."})` |
 | getSuperFolders | `folder_id` (string) | Returns the parent folders of a folder | `do_query("getSuperFolders", {"folder_id": "..."})` |
 | getSubFolders | `folder_id` (string) | Returns the subfolders of a folder | `do_query("getSubFolders", {"folder_id": "..."})` |
 | getFileFolder | `file_id` (string) | Returns the parent folder of a file | `do_query("getFileFolder", {"file_id": "..."})` |
 | getFile | `file_id` (string) | Returns a specific file | `do_query("getFile", {"file_id": "..."})` |
 | getRootFiles | `root_id` (string) | Returns the files under a root | `do_query("getRootFiles", {"root_id": "..."})` |
+| getAllFiles | None | Returns all files in the codebase | `do_query("getAllFiles", {})` |
+| getFileByName | `name` (string) | Returns a specific file by name | `do_query("getFileByName", {"name": "..."})` |
 | getFolderFiles | `folder_id` (string) | Returns the files in a folder | `do_query("getFolderFiles", {"folder_id": "..."})` |
 | getFileEntities | `file_id` (string) | Returns the entities in a file | `do_query("getFileEntities", {"file_id": "..."})` |
 | getEntityFile | `entity_id` (string) | Returns the file of an entity | `do_query("getEntityFile", {"entity_id": "..."})` |
 | getSubEntities | `entity_id` (string) | Returns the child entities of an entity | `do_query("getSubEntities", {"entity_id": "..."})` |
 | getSuperEntity | `entity_id` (string) | Returns the parent entity of an entity | `do_query("getSuperEntity", {"entity_id": "..."})` |
+
+### 2. semantic_search_code
+This tool performs vector-based semantic search to find code entities with content similar to the query. You must always use do_query tool after using this tool to make sure that you are not missing any information outside of the semantic search.
+
+```
+semantic_search_code(query: str, k: int = 5) -> List[Any]
+```
 
 ## Effective Query Strategies
 

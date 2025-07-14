@@ -14,4 +14,5 @@ dependencies = [
     "helix-py>=0.2.21",
     "google-genai>=1.25.0",
     "tree-sitter-rust==0.23.2",
+    "rich>=14.0.0",
 ]

@@ -398,7 +398,7 @@ fn process_file(
 
                                 // Chunk entity text
                                 let chunks = chunk_entity(&super_content).unwrap();
-                                println!("chunks length: {}", chunks.len());
+                                // println!("chunks length: {}", chunks.len());
 
                                 // Embed each chunk
                                 for chunk in chunks {
@@ -548,7 +548,7 @@ fn process_entity(
                     if is_super {
                         // Chunk entity text
                         let chunks = chunk_entity(&code_entity.text).unwrap();
-                        println!("chunks length: {}", chunks.len());
+                        // println!("chunks length: {}", chunks.len());
                         // println!("Chunking entity: {}", code_entity.text);
 
                         // Embed each chunk
