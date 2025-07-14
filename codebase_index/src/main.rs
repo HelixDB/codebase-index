@@ -16,6 +16,7 @@ use std::thread;
 use std::time::Instant;
 use tree_sitter::Node;
 use tree_sitter::Parser;
+use chrono::{DateTime, Utc};
 
 // Internal utility functions
 use utils::{chunk_entity, embed_entity, get_language, post_request, CodeEntity};
@@ -298,6 +299,13 @@ fn process_file(
     // Read file contents
     let source_code = fs::read_to_string(&file_path)?;
     let file_name = file_path.file_name().unwrap().to_str().unwrap();
+    let metadata = fs::metadata(&file_path)?;
+    if let Ok(last_modified) = metadata.modified() {
+        let date_modified = DateTime::<Utc>::from(last_modified).to_rfc3339();
+        println!("{} last modified at {}", file_name, date_modified);
+    } else {
+        println!("{} last modified time not available", file_name);
+    }
     let extension = file_path
         .extension()
         .and_then(|s| s.to_str())
@@ -374,7 +382,7 @@ fn process_file(
                             if super_start_byte.is_some() {
                                 // Embed super content
                                 let super_content = &source_code[super_start_byte.unwrap()..super_end_byte.unwrap()].to_string();
-                                println!("Embedding super content: \n{}", super_content);
+                                // println!("Embedding super content: \n{}", super_content);
 
                                 let endpoint = "createSuperEntity";
                                 let url = format!("http://localhost:{}/{}", port, endpoint);
