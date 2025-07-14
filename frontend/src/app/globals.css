@@ -1,0 +1,258 @@
+/* Tailwind Directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom CSS */
+:root {
+  --red:rgb(110, 8, 8);
+}
+
+@font-face {
+  font-family: 'Funnel Display';
+  src: url('https://fonts.gstatic.com/s/funneldisplay/v2/B50bF7FGv37QNVWgE0ga--4PbZSRJXrOHcLHLoAYmmPXWA.ttf') format('truetype');
+  font-display: swap;
+}
+
+/* Base Styles */
+html, body {
+  background-color: #000000;
+  background: radial-gradient(circle at center, var(--red) 0%, rgba(0, 0, 0, 1) 70%);
+  color: rgba(255, 255, 255, 0.90);
+  font-family: 'Funnel Display', var(--font-inter), system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+code {
+  font-family: 'Courier New', monospace;
+}
+
+/* Custom Button Styles */
+.model-button {
+  background-color: rgba(255, 255, 255, 0.02);
+  border-radius: 9999px;
+  padding: 2.2px 3px;
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  gap: 12px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
+}
+.model-button:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.model-button .icon {
+  font-size: 18px;
+}
+
+.model-button .text {
+  color: white;
+  font-size: 14px;
+}
+
+.think-button {
+  background-color: rgba(255, 255, 255, 0.02);
+  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  max-width: fit-content;
+  backdrop-filter: blur(8px);
+}
+.think-button:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.think-button .icon {
+  font-size: 18px;
+}
+
+.think-button .text {
+  color: white;
+  font-size: 14px;
+}
+
+/* Header Toggle Buttons */
+.header-toggle-button {
+  background-color: rgba(50, 50, 50, 0.85);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  color: white;
+  margin: 1em 1em;
+}
+
+.header-toggle-button:hover {
+  background-color: rgba(50, 50, 50, 0.99);
+}
+
+.header-toggle-button.active {
+  color: #b90025;
+  background-color: rgba(50, 50, 50, 0.85);
+}
+
+/* Stats Panel Styles */
+.stats-panel {
+  font-family: 'Funnel Display', monospace;
+  letter-spacing: 0.5px;
+}
+
+.stats-panel .text-accent {
+  color: #ff0033;
+}
+
+.stats-panel .text-gray-500 {
+  color: #777777;
+}
+
+.stats-panel .stat-row {
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+.stats-panel .risk-row {
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+/* Close button */
+.stats-panel .w-6.h-6 {
+  font-size: 16px;
+}
+
+/* Circle visualization */
+.stats-panel svg text {
+  font-family: 'Funnel Display', monospace;
+  font-size: 16px;
+}
+
+/* Make sure the text is properly centered */
+.stats-panel svg text[text-anchor="middle"] {
+  dominant-baseline: middle;
+}
+
+/* Custom Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* Liquid Glass Container */
+.glassContainer {
+  position: fixed;
+  display: -webkit-box;
+  display: -ms-flexbox;
+  display: flex;
+  -webkit-box-align: center;
+      -ms-flex-align: center;
+          align-items: center;
+  -webkit-box-pack: center;
+      -ms-flex-pack: center;
+          justify-content: center;
+  border-radius: 2rem;
+}
+
+.glassContainer::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    border-radius: 2rem;
+    -webkit-box-shadow: inset 2px 2px 0px -2px rgba(255, 255, 255, 0.3), inset 0 0 3px 1px rgba(255, 255, 255, 0.3);
+            box-shadow: inset 2px 2px 0px -2px rgba(255, 255, 255, 0.3), inset 0 0 3px 1px rgba(255, 255, 255, 0.3);
+}
+
+.glassContainer::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: 2rem;
+    -webkit-backdrop-filter: blur(0px);
+            backdrop-filter: blur(0px);
+    -webkit-filter: url(#container-glass);
+            filter: url(#container-glass);
+    overflow: hidden;
+    isolation: isolate;
+}
+
+/* Message bubble glass container */
+.messageBubbleGlass {
+  position: relative;
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  display: -webkit-box;
+  display: -ms-flexbox;
+  display: flex;
+  -webkit-box-align: center;
+      -ms-flex-align: center;
+          align-items: center;
+  -webkit-box-pack: center;
+      -ms-flex-pack: center;
+          justify-content: center;
+  width: auto;
+  height: auto;
+  border-radius: 2rem;
+}
+
+.messageBubbleGlass::before {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: 2rem;
+  -webkit-box-shadow: inset 2px 2px 0px -2px rgba(255, 255, 255, 0.3), inset 0 0 3px 1px rgba(255, 255, 255, 0.3);
+          box-shadow: inset 2px 2px 0px -2px rgba(255, 255, 255, 0.3), inset 0 0 3px 1px rgba(255, 255, 255, 0.3);
+}
+
+.messageBubbleGlass::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: -1;
+  inset: 0;
+  border-radius: 2rem;
+  -webkit-backdrop-filter: blur(0px);
+          backdrop-filter: blur(2px);
+  -webkit-filter: url(#message-glass);
+          filter: url(#message-glass);
+  overflow: hidden;
+  isolation: isolate;
+}
+
