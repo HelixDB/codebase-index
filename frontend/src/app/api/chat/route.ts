@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 
     try {
         const response = await geminiClient.models.generateContentStream({
-            model: "gemini-2.5-flash",
+            model: "gemini-2.5-pro",
             contents: formattedContents,
             config: {
                 systemInstruction: system_prompt,
