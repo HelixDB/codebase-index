@@ -47,7 +47,7 @@ pub fn embed_entity(text: String) -> Result<Vec<f64>> {
 // Send POST request to Helix instance
 pub fn post_request(url: &str, body: Value) -> Result<Value> {
     let client = reqwest::blocking::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(1))
+        .connect_timeout(std::time::Duration::from_secs(100))
         .build()?;
 
     let res = match client.post(url).json(&body).send() {

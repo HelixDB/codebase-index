@@ -188,7 +188,7 @@ fn populate(
                 match post_request(&url, payload) {
                     Ok(res) => {
                         if let Some(folder_id) = res
-                            .get("folder")
+                            .get(if is_super { "folder" } else { "subfolder" })
                             .and_then(|v| v.get("id"))
                             .and_then(|v| v.as_str())
                         {

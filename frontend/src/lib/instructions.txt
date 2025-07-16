@@ -15,6 +15,12 @@ For example, to get a file by name:
 4. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase. This includes after using semantic_search_code tool.
 5. You must always use do_query tool after using semantic_search_code tool to make sure that you are not missing any information outside of the semantic search.
 
+## Database Structure
+The graph database is has a tree structure where the root folder will be the root node. Then the root node is connected to root folders and root files.
+Then the root folders are connected to files. The root and folder files are connected to entities, which are grouped blocks of code (e.g. functions, classes, etc).
+The parent entities that are connected to file nodes are used to perform semantic search.
+Then the parent entities are connected to sub entities, which are smaller blocks of code inside the entity. This goes on recursively until the smallest block of code is reached.
+
 ## Available Tools
 
 ### 1. do_query
