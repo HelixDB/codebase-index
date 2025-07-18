@@ -39,21 +39,9 @@ fn main() -> Result<()> {
     let update_interval = 10;
 
     // Get arguments
-    let path: String = if args.len() > 1 {
-        args[1].clone()
-    } else {
-        "sample".to_string()
-    };
-    let port: u16 = if args.len() > 2 {
-        args[2].parse::<u16>().unwrap()
-    } else {
-        default_port
-    };
-    let concur_limit: usize = if args.len() > 3 {
-        args[3].parse::<usize>().unwrap_or(max_concur)
-    } else {
-        max_concur
-    };
+    let path: String = if args.len() > 1 { args[1].clone() } else { "sample".to_string() };
+    let port: u16 = if args.len() > 2 { args[2].parse::<u16>().unwrap() } else { default_port };
+    let concur_limit: usize = if args.len() > 3 { args[3].parse::<usize>().unwrap_or(max_concur) } else { max_concur };
 
     println!("\nConnecting to Helix instance at port {}", port);
 
@@ -79,11 +67,8 @@ fn main() -> Result<()> {
             let EmbeddingJob { chunk, entity_id, port } = job;
             match embed_entity_async(chunk).await {
                 Ok(embedding) => {
-                    let url = format!("http://localhost:{}/embedSuperEntity", port);
-                    let payload = json!({
-                        "entity_id": entity_id,
-                        "vector": embedding,
-                    });
+                    let url = format!("http://localhost:{}/{}", port, "embedSuperEntity");
+                    let payload = json!({"entity_id": entity_id,"vector": embedding,});
                     if let Err(e) = post_request_async(&url, payload).await {
                         eprintln!("Failed to post embedding: {}", e);
                     }
@@ -101,7 +86,6 @@ fn main() -> Result<()> {
     let root_id = ingestion(
         PathBuf::from(path.clone()).canonicalize()?,
         port,
-        concur_limit,
         Arc::clone(&runtime),
         tx.clone(), // Pass the sender into ingestion
     )?;
@@ -116,11 +100,7 @@ fn main() -> Result<()> {
     // Get the total number of chunks processed
     let total_chunks = TOTAL_CHUNKS.load(Ordering::SeqCst);
 
-    println!(
-        "\nIngestion finished in {} seconds",
-        start_time.elapsed().as_secs_f64()
-    );
-
+    println!("\nIngestion finished in {} seconds", start_time.elapsed().as_secs_f64());
     println!("Root ID: {}", root_id);
     println!("Total chunks processed: {}", total_chunks);
 
@@ -129,7 +109,10 @@ fn main() -> Result<()> {
 
     loop {
         println!("\nUpdating index...");
-        update(PathBuf::from(path.clone()).canonicalize()?, root_id.clone(), port, concur_limit, runtime.clone(), tx.clone(), 5)?;
+        update(
+            PathBuf::from(path.clone()).canonicalize()?, root_id.clone(), 
+            port, runtime.clone(), tx.clone(), 5
+        )?;
         while ACTIVE_THREADS.load(Ordering::SeqCst) > 0 {
             // Poll the counter every 10ms
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -154,7 +137,6 @@ pub fn update(
     root_path: PathBuf,
     root_id: String,
     port: u16,
-    _concur_limit: usize,
     runtime: Arc<Runtime>,
     tx: tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
     update_interval: u64,
@@ -166,8 +148,7 @@ pub fn update(
 
     // Check if root exists
     let url = format!("http://localhost:{}/{}", port, "getRootById");
-    let payload = json!({ "root_id": root_id });
-    let root_res = post_request(&url, payload, &runtime)?;
+    let root_res = post_request(&url, json!({ "root_id": root_id }), &runtime)?;
     let root = root_res
         .get("root")
         .and_then(|v| v.get("name"))
@@ -182,8 +163,7 @@ pub fn update(
 
     // Get root folders
     let url = format!("http://localhost:{}/{}", port, "getRootFolders");
-    let payload = json!({ "root_id": root_id });
-    let root_folder_res = post_request(&url, payload, &runtime)?;
+    let root_folder_res = post_request(&url, json!({ "root_id": root_id }), &runtime)?;
     let root_folders = root_folder_res
         .get("folders")
         .and_then(|v| v.as_array())
@@ -208,12 +188,13 @@ pub fn update(
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("Root ID not found"))?;
 
-    let mut root_file_name_ids = HashMap::new();
+    let mut root_file_name_ids: HashMap<String, (String, String)> = HashMap::new();
 
     for file in root_files {
         let file_id = file.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
         let file_name = file.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File name not found"))?;
-        root_file_name_ids.insert(file_name.to_string(), file_id.to_string());
+        let file_extracted_at = file.get("extracted_at").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File extracted at not found"))?;
+        root_file_name_ids.insert(file_name.to_string(), (file_id.to_string(), file_extracted_at.to_string()));
     }
 
     // println!("Root file IDs: {:#?}", root_file_name_ids);
@@ -244,7 +225,7 @@ pub fn update(
         if path_buf.is_dir(){
             let folder_name = path_buf.file_name().unwrap().to_str().unwrap();
             if root_folder_name_ids_clone.contains_key(folder_name){
-                println!("Folder {} already exists", folder_name);
+                // println!("Folder {} already exists", folder_name);
                 let folder_id = root_folder_name_ids_clone.get(folder_name).unwrap().to_string();
                 let _ = update_folder(path_buf.clone(), folder_id.clone(), port, index_types_clone, runtime_clone, tx_clone, update_interval);
             } else {
@@ -277,19 +258,13 @@ pub fn update(
                 let file_name = path_buf_clone.file_name().unwrap().to_str().unwrap();
                 
                 if root_file_name_ids_clone.contains_key(file_name){
-                    println!("File {} already exists", file_name);
-                    let file_id = root_file_name_ids_clone.get(file_name).unwrap().to_string();
+                    let file_id = root_file_name_ids_clone.get(file_name).unwrap().0.to_string();
+                    let file_extracted_at = root_file_name_ids_clone.get(file_name).unwrap().1.to_string();
                     let metadata = fs::metadata(&path_buf_clone).expect("Failed to get metadata");
                     if let Ok(last_modified) = metadata.modified() {
                         let date_modified = DateTime::<Utc>::from(last_modified);
-
-                        let url = format!("http://localhost:{}/{}", port, "getFile");
-                        let payload = json!({ "file_id": file_id });
-                        let file_res = post_request(&url, payload, &runtime_inner).expect("File not found");
-                        let file = file_res.get("file").expect("File not found");
                         
-                        let extracted_at = file.get("extracted_at").and_then(|v| v.as_str()).expect("File ID not found");
-                        let date_extracted = DateTime::parse_from_rfc3339(extracted_at)
+                        let date_extracted = DateTime::parse_from_rfc3339(&file_extracted_at)
                             .expect("Failed to parse date")
                             .with_timezone(&Utc);
 
@@ -297,35 +272,22 @@ pub fn update(
                         if diff_sec > update_interval.try_into().unwrap() {
                             println!("File {} is out of date", file_name);
                             let _ = update_file(
-                                path_buf_clone,
-                                file_id,
-                                port,
-                                index_types_inner,
-                                runtime_inner,
-                                tx_clone.clone(),
+                                path_buf_clone,file_id,port,
+                                index_types_inner,runtime_inner,tx_clone.clone()
                             );
                         }
                     } else {
-                        println!("{} last modified time not available", file_name);
+                        println!("File {} last modified time not available", file_name);
                         let _ = update_file(
-                            path_buf_clone,
-                            file_id,
-                            port,
-                            index_types_inner,
-                            runtime_inner,
-                            tx_clone.clone(),
+                            path_buf_clone,file_id,port,
+                            index_types_inner,runtime_inner,tx_clone.clone()
                         );
                     }
                 } else {
                     println!("File {} does not exist", file_name);
                     let _ = process_file(
-                        path_buf_clone,
-                        root_id_clone,
-                        true,
-                        port,
-                        index_types_inner,
-                        runtime_inner,
-                        tx_clone.clone(),
+                        path_buf_clone, root_id_clone, true, 
+                        port, index_types_inner, runtime_inner, tx_clone.clone()
                     );
                 }
             });
@@ -362,6 +324,7 @@ pub fn update_folder(
 
     // println!("Subfolder IDs: {:#?}", subfolder_name_ids);
 
+    // Get folder files
     let url = format!("http://localhost:{}/{}", port, "getFolderFiles");
     let payload = json!({ "folder_id": folder_id });
     let folder_file_res = post_request(&url, payload, &runtime)?;
@@ -370,12 +333,13 @@ pub fn update_folder(
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("Folder ID not found"))?;
 
-    let mut folder_file_name_ids = HashMap::new();
+    let mut folder_file_name_ids: HashMap<String, (String, String)> = HashMap::new();
 
     for file in folder_files {
         let file_id = file.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
         let file_name = file.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File name not found"))?;
-        folder_file_name_ids.insert(file_name.to_string(), file_id.to_string());
+        let file_extracted_at = file.get("extracted_at").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File extracted at not found"))?;
+        folder_file_name_ids.insert(file_name.to_string(), (file_id.to_string(), file_extracted_at.to_string()));
     }
 
     // println!("Subfolder file IDs: {:#?}", folder_file_name_ids);
@@ -406,9 +370,8 @@ pub fn update_folder(
         if path_buf.is_dir(){
             let folder_name = path_buf.file_name().unwrap().to_str().unwrap();
             let folder_id = subfolder_name_ids.get(folder_name).unwrap().to_string();
-            println!("Submitting {} folder for processing", folder_name);
             if subfolder_name_ids.contains_key(folder_name){
-                println!("Folder {} already exists", folder_name);
+                // println!("Folder {} already exists", folder_name);
                 let _ = update_folder(path_buf.clone(), folder_id.clone(), port, index_types_clone, runtime_clone, tx_clone, update_interval);
             } else {
                 println!("Folder {} does not exist", folder_name);
@@ -440,17 +403,12 @@ pub fn update_folder(
                 let file_name = path_buf_clone.file_name().unwrap().to_str().unwrap();
                 
                 if folder_file_name_ids_clone.contains_key(file_name){
-                    let file_id = folder_file_name_ids_clone.get(file_name).unwrap().to_string();
+                    let file_id = folder_file_name_ids_clone.get(file_name).unwrap().0.to_string();
+                    let file_extracted_at = folder_file_name_ids_clone.get(file_name).unwrap().1.to_string();
                     let metadata = fs::metadata(&path_buf_clone).expect("Failed to get metadata");
                     if let Ok(last_modified) = metadata.modified() {
                         let date_modified = DateTime::<Utc>::from(last_modified);
-
-                        let url = format!("http://localhost:{}/{}", port, "getFile");
-                        let payload = json!({ "file_id": file_id });
-                        let file_res = post_request(&url, payload, &runtime_inner).expect("File not found");
-                        let file = file_res.get("file").expect("File not found");
-                        let extracted_at = file.get("extracted_at").and_then(|v| v.as_str()).expect("File ID not found");
-                        let date_extracted = DateTime::parse_from_rfc3339(extracted_at)
+                        let date_extracted = DateTime::parse_from_rfc3339(&file_extracted_at)
                             .expect("Failed to parse date")
                             .with_timezone(&Utc);
 
@@ -465,10 +423,7 @@ pub fn update_folder(
                                 runtime_inner,
                                 tx_clone.clone(),
                             );
-                        } else {
-                            println!("File {} is up to date", file_name);
                         }
-
                     } else {
                         println!("File {} last modified time not available", file_name);
                         let _ = update_file(
@@ -507,7 +462,13 @@ pub fn update_file(
     runtime: Arc<Runtime>,
     tx: tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
 ) -> Result<()> {
-    let source_code = fs::read_to_string(&file_path)?;
+    let source_code = match fs::read_to_string(&file_path) {
+        Ok(source_code) => source_code,
+        Err(e) => {
+            eprintln!("Skipped {}: {}", file_path.file_name().unwrap().to_str().unwrap(), e);
+            return Ok(());
+        }
+    };
     let file_name = file_path.file_name().unwrap().to_str().unwrap();
     let extension = file_path
         .extension()
@@ -522,8 +483,7 @@ pub fn update_file(
 
         // Update file
         let time_now = Utc::now().to_rfc3339();
-        let endpoint = "updateFile";
-        let url = format!("http://localhost:{}/{}", port, endpoint);
+        let url = format!("http://localhost:{}/{}", port, "updateFile");
         let payload = json!({ "file_id": file_id, "text": source_code, "extracted_at": time_now });
 
         // Send request to update file
@@ -579,8 +539,7 @@ pub fn update_file(
                             let entity_end_byte = entity.end_byte();
                             let entity_content = &source_code_clone[entity_start_byte..entity_end_byte].to_string();
                             
-                            let endpoint = "createSuperEntity";
-                            let url = format!("http://localhost:{}/{}", port, endpoint);
+                            let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
                             let payload = json!({
                                 "file_id": file_id_clone.clone(),
                                 "entity_type": entity.kind().to_string(),
@@ -676,10 +635,8 @@ pub fn delete_entities(
 ) -> Result<()> {
     if is_super {
          // Get Sub Entities
-        let endpoint = "getFileEntities";
-        let url = format!("http://localhost:{}/{}", port, endpoint);
-        let payload = json!({ "file_id": parent_id });
-        let response = post_request(&url, payload, &runtime)?;
+        let url = format!("http://localhost:{}/{}", port, "getFileEntities");
+        let response = post_request(&url, json!({ "file_id": parent_id }), &runtime)?;
         let super_entities = response
             .get("entity")
             .and_then(|v| v.as_array())
@@ -709,17 +666,13 @@ pub fn delete_entities(
             let _ = delete_entities(super_entity_id.to_string(), false, port, runtime_clone);
 
             // Delete super entity
-            let endpoint = "deleteSuperEntity";
-            let url = format!("http://localhost:{}/{}", port, endpoint);
-            let payload = json!({ "entity_id": super_entity_id });
-            let _ = post_request(&url, payload, &runtime);
+            let url = format!("http://localhost:{}/{}", port, "deleteSuperEntity");
+            let _ = post_request(&url, json!({ "entity_id": super_entity_id }), &runtime);
         });
     } else {
          // Get Sub Entities
-        let endpoint = "getSubEntities";
-        let url = format!("http://localhost:{}/{}", port, endpoint);
-        let payload = json!({ "entity_id": parent_id });
-        let response = post_request(&url, payload, &runtime)?;
+        let url = format!("http://localhost:{}/{}", port, "getSubEntities");
+        let response = post_request(&url, json!({ "entity_id": parent_id }), &runtime)?;
         let sub_entities = response
             .get("entities")
             .and_then(|v| v.as_array())
@@ -749,10 +702,8 @@ pub fn delete_entities(
             let _ = delete_entities(sub_entity_id.to_string(), false, port, runtime_clone);
 
             // Delete sub entity
-            let endpoint = "deleteSubEntity";
-            let url = format!("http://localhost:{}/{}", port, endpoint);
-            let payload = json!({ "entity_id": sub_entity_id });
-            let _ = post_request(&url, payload, &runtime);
+            let url = format!("http://localhost:{}/{}", port, "deleteSubEntity");
+            let _ = post_request(&url, json!({ "entity_id": sub_entity_id }), &runtime);
         });
     }
     Ok(())
@@ -761,7 +712,6 @@ pub fn delete_entities(
 pub fn ingestion(
     root_path: PathBuf,
     port: u16,
-    _concur_limit: usize,
     runtime: Arc<Runtime>,
     tx: tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
 ) -> Result<String> {
@@ -769,11 +719,8 @@ pub fn ingestion(
 
     // Create a root entry in the index
     let root_name = root_path.file_name().unwrap().to_str().unwrap();
-    let url = format!("http://localhost:{}/createRoot", port);
-    let payload = json!({ "name": root_name });
-
-    // Send request to create root and get its ID
-    let root_response = post_request(&url, payload, &runtime)?;
+    let url = format!("http://localhost:{}/{}", port, "createRoot");
+    let root_response = post_request(&url, json!({ "name": root_name }), &runtime)?;
     let root_id = root_response
         .get("root")
         .and_then(|v| v.get("id"))
@@ -789,13 +736,8 @@ pub fn ingestion(
 
     // Start populating the index with directory contents
     populate(
-        root_path,
-        root_id.to_string(),
-        port,
-        true,
-        index_types,
-        Arc::clone(&runtime),
-        tx,
+        root_path,root_id.to_string(),port,
+        true,index_types,Arc::clone(&runtime),tx
     )?;
 
     Ok(root_id.to_string())
@@ -837,11 +779,7 @@ fn populate(
         if path_buf.is_dir() {
             // Get folder information
             let folder_name = path_buf.file_name().unwrap().to_str().unwrap();
-            let endpoint = if is_super {
-                "createSuperFolder"
-            } else {
-                "createSubFolder"
-            };
+            let endpoint = if is_super {"createSuperFolder"} else {"createSubFolder"};
             let url = format!("http://localhost:{}/{}", port, endpoint);
             let payload = if is_super {
                 json!({ "name": folder_name, "root_id": parent_id_clone })
@@ -880,25 +818,14 @@ fn populate(
                             let _guard = ThreadGuard;
 
                             if let Err(e) = populate(
-                                path_buf_clone,
-                                folder_id,
-                                port,
-                                false,
-                                index_types_inner,
-                                runtime_inner,
-                                tx_clone.clone(),
+                                path_buf_clone,folder_id,port,
+                                false,index_types_inner,runtime_inner, tx_clone.clone()
                             ) {
-                                eprintln!(
-                                    "Error populating folder {}: {}",
-                                    folder_name_clone, e
-                                );
+                                eprintln!("Error populating folder {}: {}",folder_name_clone, e);
                             }
                         });
                     } else {
-                        eprintln!(
-                            "Failed to extract folder ID from response for: {}",
-                            folder_name
-                        );
+                        eprintln!("Failed to extract folder ID from response for: {}", folder_name);
                     }
                 }
                 Err(e) => {
@@ -928,13 +855,8 @@ fn populate(
                 let _guard = ThreadGuard;
 
                 process_file(
-                    path_buf_clone,
-                    parent_id_clone2,
-                    is_super,
-                    port,
-                    index_types_inner,
-                    runtime_inner,
-                    tx_clone.clone(),
+                    path_buf_clone,parent_id_clone2,is_super,
+                    port, index_types_inner,runtime_inner,tx_clone.clone()
                 )
                 .ok();
             });
@@ -955,7 +877,14 @@ fn process_file(
     tx: tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
 ) -> Result<()> {
     // Read file contents
-    let source_code = fs::read_to_string(&file_path)?;
+    let source_code = match fs::read_to_string(&file_path) {
+        Ok(source_code) => source_code,
+        Err(e) => {
+            eprintln!("Skipped {}: {}", file_path.file_name().unwrap().to_str().unwrap(), e);
+            return Ok(());
+        }
+    };
+
     let file_name = file_path.file_name().unwrap().to_str().unwrap();
     let extension = file_path
         .extension()
@@ -971,11 +900,7 @@ fn process_file(
 
         // Create file
         let file_type = if is_super { "super" } else { "sub" };
-        let endpoint = if is_super {
-            "createSuperFile"
-        } else {
-            "createFile"
-        };
+        let endpoint = if is_super {"createSuperFile"} else {"createFile"};
         let url = format!("http://localhost:{}/{}", port, endpoint);
         let payload = if is_super {
             json!({ "name": file_name, "extension": extension, "root_id": parent_id, "text": source_code })
@@ -989,13 +914,6 @@ fn process_file(
             Ok(response) => response,
             Err(e) => {
                 eprintln!("Failed to create file {}: {}", file_name, e);
-                eprintln!(
-                    "This could indicate that the Helix server is not running or not responding."
-                );
-                eprintln!(
-                    "Check that the server is running at http://localhost:{}",
-                    port
-                );
                 return Err(anyhow::anyhow!("Failed to create file: {}", e));
             }
         };
@@ -1056,8 +974,7 @@ fn process_file(
                             let entity_end_byte = entity.end_byte();
                             let entity_content = &source_code_clone[entity_start_byte..entity_end_byte].to_string();
                             
-                            let endpoint = "createSuperEntity";
-                            let url = format!("http://localhost:{}/{}", port, endpoint);
+                            let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
                             let payload = json!({
                                 "file_id": file_id_clone.clone(),
                                 "entity_type": entity.kind().to_string(),
@@ -1097,11 +1014,7 @@ fn process_file(
                                         //     let _embed_guard = EmbedThreadGuard;
                                             
                                         //     // Generate embedding
-                                        //     let job = utils::EmbeddingJob {
-                                        //         chunk: chunk_clone,
-                                        //         entity_id: entity_id_clone,
-                                        //         port,
-                                        //     };
+                                        //     let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
                                         //     let tx_clone = tx.clone();
                                         //     if let Err(e) = tx_clone.blocking_send(job) {
                                         //         eprintln!("Failed to send embedding job: {}", e);
@@ -1117,16 +1030,9 @@ fn process_file(
             
             // Process entity and its children
             if let Err(e) = process_entity(
-                *entity,
-                &source_code_clone,
-                file_id_clone,
-                port,
-                true,
-                current_order,
-                extension_clone,
-                index_types_clone,
-                runtime_clone,
-                tx.clone(),
+                *entity,&source_code_clone,file_id_clone,
+                port,true,current_order,extension_clone,
+                index_types_clone,runtime_clone,tx.clone(),
             ) {
                 eprintln!("Error processing entity: {}", e);
             }
@@ -1134,11 +1040,7 @@ fn process_file(
     // File is not supported by Tree Sitter
     } else {
         // Create file without entities
-        let endpoint = if is_super {
-            "createSuperFile"
-        } else {
-            "createFile"
-        };
+        let endpoint = if is_super {"createSuperFile"} else {"createFile"};
         let url = format!("http://localhost:{}/{}", port, endpoint);
         let payload = if is_super {
             json!({ "name": file_name, "extension": extension, "root_id": parent_id, "text": source_code })
@@ -1185,16 +1087,9 @@ fn process_entity(
             let mut order = 1;
             for child in children.into_iter() {
                 process_entity(
-                    child,
-                    &source_code,
-                    parent_id.to_string(),
-                    port,
-                    false,
-                    order,
-                    extension.clone(),
-                    Arc::clone(&index_types),
-                    Arc::clone(&runtime),
-                    tx.clone(),
+                    child,&source_code,parent_id.to_string(),
+                    port,false,order,extension.clone(),
+                    Arc::clone(&index_types),Arc::clone(&runtime),tx.clone(),
                 )?;
                 order += 1;
             }
@@ -1202,15 +1097,20 @@ fn process_entity(
     }
     // General case
     else {
-        if let Some(types) = index_types.get(&extension) {
+        // Handle special extension cases
+        let mut index_type = extension.clone();
+        if extension == "cc" || extension == "cxx" {
+            index_type = "cpp".to_string();
+        } else if extension == "h" {
+            index_type = "c".to_string();
+        }
+
+        if let Some(types) = index_types.get(&index_type) {
             if let Some(types_array) = types.as_array() {
                 let entity_type = &code_entity.entity_type;
-                if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity_type)) || types_array.iter().any(|v| v.as_str().map_or(false, |s| s == "ALL")) {
-                    let endpoint = if is_super {
-                        "createSuperEntity"
-                    } else {
-                        "createSubEntity"
-                    };
+                if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity_type)) || 
+                types_array.iter().any(|v| v.as_str().map_or(false, |s| s == "ALL")) {
+                    let endpoint = if is_super {"createSuperEntity"} else {"createSubEntity"};
                     let url = format!("http://localhost:{}/{}", port, endpoint);
                     let id_name = if is_super {"file_id"} else {"entity_id"};
                     let payload = json!({
@@ -1250,11 +1150,7 @@ fn process_entity(
                         //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
 
                         //     // Send embedding job to async background worker via mpsc channel
-                        //     let job = utils::EmbeddingJob {
-                        //         chunk: chunk_clone,
-                        //         entity_id: entity_id_clone,
-                        //         port,
-                        //     };
+                        //     let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
                         //     let tx_clone = tx.clone();
                         //     if let Err(e) = tx_clone.blocking_send(job) {
                         //         eprintln!("Failed to send embedding job: {}", e);
@@ -1299,16 +1195,9 @@ fn process_entity(
                             
                             // Process child entity
                             if let Err(e) = process_entity(
-                                child,
-                                &source_code_clone,
-                                entity_id_clone,
-                                port,
-                                false,
-                                current_order,
-                                extension_clone,
-                                index_types_clone,
-                                runtime_clone,
-                                tx.clone(),
+                                child,&source_code_clone,entity_id_clone,
+                                port,false,current_order,extension_clone,
+                                index_types_clone,runtime_clone,tx.clone(),
                             ) {
                                 eprintln!("Error processing child entity: {}", e);
                             }

@@ -26,16 +26,22 @@ pub struct EmbeddingJob {
 
 // Global HTTP client with connection pooling
 lazy_static! {
-    static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::builder()
+    static ref embedding_client: reqwest::Client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(1000)
         .pool_idle_timeout(Duration::from_secs(30))
         .build()
         .expect("Failed to create HTTP client");
 
-    // Governor-based async rate limiter for embeddings (default: 1000 RPM)
+    static ref helix_client: reqwest::Client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .pool_max_idle_per_host(1000)
+        .pool_idle_timeout(Duration::from_secs(60))
+        .build()
+        .expect("Failed to create HTTP client");
+
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(1000).unwrap()));
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(900).unwrap()));
 }
 
 // Chunk entity text
@@ -54,7 +60,6 @@ pub async fn embed_entity_async(text: String) -> Result<Vec<f64>> {
         return Err(anyhow::anyhow!("Cannot embed empty text"));
     }
 
-    // Governor async rate limiting
     EMBEDDING_LIMITER.until_ready().await;
 
     // Use gemini api to embed text with the global HTTP client
@@ -63,7 +68,7 @@ pub async fn embed_entity_async(text: String) -> Result<Vec<f64>> {
         Err(_) => return Err(anyhow::anyhow!("GEMINI_API_KEY environment variable not set"))
     };
 
-    let res = HTTP_CLIENT.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent")
+    let res = embedding_client.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent")
         .header("x-goog-api-key", api_key)
         .header("Content-Type", "application/json")
         .json(&json!({
@@ -121,7 +126,7 @@ pub fn post_request(url: &str, body: Value, runtime: &Runtime) -> Result<Value> 
 // Async version of post_request
 pub async fn post_request_async(url: &str, body: Value) -> Result<Value> {
     // Use the global HTTP client with connection pooling
-    let res = match HTTP_CLIENT.post(url).json(&body).send().await {
+    let res = match helix_client.post(url).json(&body).send().await {
         Ok(response) => response,
         Err(e) => {
             if e.is_timeout() {
@@ -146,7 +151,8 @@ pub fn get_language(file_path: &Path) -> Option<tree_sitter::Language> {
         Some("py") => Some(tree_sitter_python::LANGUAGE.into()),
         Some("rs") => Some(tree_sitter_rust::LANGUAGE.into()),
         Some("zig") => Some(tree_sitter_zig::LANGUAGE.into()),
-        Some("cpp") => Some(tree_sitter_cpp::LANGUAGE.into()),
+        Some("cpp") | Some("cc") | Some("cxx") => Some(tree_sitter_cpp::LANGUAGE.into()),
+        Some("c") | Some("h") => Some(tree_sitter_c::LANGUAGE.into()),
         _ => None,
     }
 }
