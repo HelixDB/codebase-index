@@ -55,6 +55,10 @@ QUERY getRoot() =>
     root <- N<Root>
     RETURN root
 
+QUERY getRootById(root_id: ID) => 
+    root <- N<Root>(root_id)
+    RETURN root
+
 QUERY getFolderRoot(folder_id: ID) => 
     root <- N<Folder>(folder_id)::In<Root_to_Folder>
     RETURN root
@@ -134,3 +138,22 @@ QUERY getSubEntities(entity_id: ID) =>
 QUERY getSuperEntity(entity_id: ID) => 
     entity <- N<Entity>(entity_id)::In<Entity_to_Entity>
     RETURN entity
+
+
+
+// Update File
+QUERY updateFile(file_id: ID, text: String, extracted_at: Date) => 
+    file <- N<File>(file_id)::UPDATE({text:text, extracted_at: extracted_at})
+    RETURN file
+
+// Delete Entity
+QUERY deleteSuperEntity(entity_id: ID) => 
+    DROP N<Entity>(entity_id)::InE<File_to_Entity>
+    DROP N<Entity>(entity_id)::Out<Entity_to_EmbededCode>
+    DROP N<Entity>(entity_id)
+    RETURN "success"
+
+QUERY deleteSubEntity(entity_id: ID) => 
+    DROP N<Entity>(entity_id)::InE<Entity_to_Entity>
+    DROP N<Entity>(entity_id)
+    RETURN "success"
