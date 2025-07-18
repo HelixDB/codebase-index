@@ -117,6 +117,10 @@ QUERY getFileByName (name: String) =>
     file <- N<File>::WHERE(_::{name}::EQ(name))
     RETURN file
 
+QUERY getFileByExtension(extension: String) => 
+    files <- N<File>::WHERE(_::{extension}::EQ(extension))
+    RETURN files
+
 // Get Entity
 QUERY getFileEntities(file_id: ID) => 
     entity <- N<File>(file_id)::Out<File_to_Entity>
@@ -139,7 +143,9 @@ QUERY getSuperEntity(entity_id: ID) =>
     entity <- N<Entity>(entity_id)::In<Entity_to_Entity>
     RETURN entity
 
-
+QUERY getEntityByType(file_id: ID, entity_type: String) => 
+    entity <- N<File>(file_id)::Out<File_to_Entity>::WHERE(_::{entity_type}::EQ(entity_type))
+    RETURN entity
 
 // Update File
 QUERY updateFile(file_id: ID, text: String, extracted_at: Date) => 
