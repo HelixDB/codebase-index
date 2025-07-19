@@ -41,6 +41,7 @@ ALLOWED_ENDPOINTS = {
     "getSubFolders",
     "getFileFolder",
     "getFile",
+    "getFileContent",
     "getFileByName",
     "getAllFiles",
     "getRootFiles",
@@ -132,6 +133,8 @@ def do_query(endpoint: str, payload: Dict[str, Any]) -> List[Any]:
                     raise ValueError(f"{param} must be a list")
             elif not isinstance(value, expected_type):
                 raise ValueError(f"{param} must be {expected_type.__name__}, got {type(value).__name__}")
+
+    print(f'Called `do_query` with endpoint: {endpoint} and payload:\n{payload}')
     return db.query(endpoint, payload)
 
 @mcp.tool
@@ -146,11 +149,13 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
     """
 
     result = gemini_client.models.embed_content(
-        model="models/text-embedding-004",
+        model="gemini-embedding-001",
         contents=query,
-        config=genai.types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"))
+        config=genai.types.EmbedContentConfig(task_type="CODE_RETRIEVAL_QUERY"))
     
     query_vector = result.embeddings[0].values
+
+    print(f'Called `semantic_search_code` with query: {query} and k: {k}')
     return db.query("searchSuperEntity", {"vector": query_vector, "k": k})
 
 if __name__ == "__main__":#

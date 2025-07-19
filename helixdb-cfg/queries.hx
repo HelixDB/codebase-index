@@ -99,27 +99,31 @@ QUERY getFolderByName(name: String) =>
 // Get Files
 QUERY getAllFiles() => 
     files <- N<File>
-    RETURN files
+    RETURN files::!{text}
 
 QUERY getFile(file_id: ID) => 
     file <- N<File>(file_id)
-    RETURN file
+    RETURN file::!{text}
 
 QUERY getRootFiles(root_id: ID) => 
     files <- N<Root>(root_id)::Out<Root_to_File>
-    RETURN files
+    RETURN files::!{text}
 
 QUERY getFolderFiles(folder_id: ID) => 
     files <- N<Folder>(folder_id)::Out<Folder_to_File>
-    RETURN files
+    RETURN files::!{text}
 
 QUERY getFileByName (name: String) => 
     file <- N<File>::WHERE(_::{name}::EQ(name))
-    RETURN file
+    RETURN file::!{text}
 
 QUERY getFileByExtension(extension: String) => 
     files <- N<File>::WHERE(_::{extension}::EQ(extension))
-    RETURN files
+    RETURN files::!{text}
+
+QUERY getFileContent(file_id: ID) => 
+    file <- N<File>(file_id)
+    RETURN file::{text}
 
 // Get Entity
 QUERY getFileEntities(file_id: ID) => 
@@ -128,7 +132,7 @@ QUERY getFileEntities(file_id: ID) =>
 
 QUERY getEntityFile(entity_id: ID) => 
     file <- N<Entity>(entity_id)::In<File_to_Entity>
-    RETURN file
+    RETURN file::!{text}
 
 QUERY searchSuperEntity(vector: [F64], k: I64) => 
     vectors <- SearchV<EmbededCode>(vector, k)

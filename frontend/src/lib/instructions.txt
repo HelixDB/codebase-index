@@ -14,6 +14,8 @@ For example, to get a file by name:
 3. You should use multiple tool calls to answer the question if necessary.
 4. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase. This includes after using semantic_search_code tool.
 5. You must always use do_query tool after using semantic_search_code tool to make sure that you are not missing any information outside of the semantic search.
+6. Before using the `getFileContent` endpoint for `do_query`, try traversing through the file's entities first to gain a deeper understanding of the file.
+7. Only try to access the file content if you are absolutely sure that you need to. Try to use the file entities to answer the question if possible.
 
 ## Database Structure
 The graph database is has a tree structure where the root folder will be the root node. Then the root node is connected to root folders and root files.
@@ -45,6 +47,7 @@ When using `do_query`, the following endpoints are available:
 | getSubFolders | `folder_id` (string) | Returns the subfolders of a folder | `do_query("getSubFolders", {"folder_id": "..."})` |
 | getFileFolder | `file_id` (string) | Returns the parent folder of a file | `do_query("getFileFolder", {"file_id": "..."})` |
 | getFile | `file_id` (string) | Returns a specific file | `do_query("getFile", {"file_id": "..."})` |
+| getFileContent | `file_id` (string) | Returns the content of a specific file | `do_query("getFileContent", {"file_id": "..."})` |
 | getRootFiles | `root_id` (string) | Returns the files under a root | `do_query("getRootFiles", {"root_id": "..."})` |
 | getAllFiles | None | Returns all files in the codebase | `do_query("getAllFiles", {})` |
 | getFileByName | `name` (string) | Returns a specific file by name | `do_query("getFileByName", {"name": "..."})` |
