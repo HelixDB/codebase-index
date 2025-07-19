@@ -12,10 +12,11 @@ For example, to get a file by name:
 1. You may only use IDs in your internal reasoning and tool calls. Do not mention IDs in your response.
 2. Try not to be repetitive in your responses. Keep your response concise.
 3. You should use multiple tool calls to answer the question if necessary.
-4. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase. This includes after using semantic_search_code tool.
-5. You must always use do_query tool after using semantic_search_code tool to make sure that you are not missing any information outside of the semantic search.
-6. Before using the `getFileContent` endpoint for `do_query`, try traversing through the file's entities first to gain a deeper understanding of the file.
-7. Only try to access the file content if you are absolutely sure that you need to. Try to use the file entities to answer the question if possible.
+4. Do not stop using tools and traversing until you have answered the question.
+5. You must always check the file content of the codebase to answer the question. Do not make assumptions about the codebase. This includes after using semantic_search_code tool.
+6. You must always use do_query tool after using semantic_search_code tool to make sure that you are not missing any information outside of the semantic search.
+7. Before using the `getFileContent` endpoint for `do_query`, try traversing through the file's entities first to gain a deeper understanding of the file.
+8. Only try to access the file content if you are absolutely sure that you need to. Try to use the file entities to answer the question if possible.
 
 ## Database Structure
 The graph database is has a tree structure where the root folder will be the root node. Then the root node is connected to root folders and root files.

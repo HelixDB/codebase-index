@@ -86,31 +86,6 @@ endpoints_with_types = extract_endpoints_with_types()
 
 @mcp.tool
 def do_query(endpoint: str, payload: Dict[str, Any]) -> List[Any]:
-    """
-    Execute a Helix DB query by specifying the endpoint name and payload dictionary.
-    Restricted to read-only operations: search and retrieval of codebase entities.
-    Available endpoints:
-    getRoot - Get root nodes
-    getFolderRoot - Get root for a specific folder
-    getFileRoot - Get root for a specific file
-    getFolder - Get a specific folder
-    getRootFolders - Get folders under a root
-    getSuperFolders - Get parent folders of a folder
-    getSubFolders - Get subfolders of a folder
-    getFileFolder - Get folder containing a file
-    getFile - Get a specific file
-    getRootFiles - Get files under a root
-    getFolderFiles - Get files in a folder
-    getFileEntities - Get entities in a file
-    getEntityFile - Get file containing an entity
-    getSubEntities - Get child entities of an entity
-    getSuperEntity - Get parent entity of an entity
-    Payload is type-checked before execution.
-
-    Args:
-        endpoint (str): The endpoint to query.
-        payload (dict): The payload to pass to the endpoint.
-    """
     # Check if endpoint is allowed
     if endpoint not in ALLOWED_ENDPOINTS:
         raise ValueError(f"Endpoint '{endpoint}' is not allowed. Permitted endpoints: {', '.join(sorted(ALLOWED_ENDPOINTS))}")
@@ -158,6 +133,6 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
     print(f'Called `semantic_search_code` with query: {query} and k: {k}')
     return db.query("searchSuperEntity", {"vector": query_vector, "k": k})
 
-if __name__ == "__main__":#
+if __name__ == "__main__":
     PORT = os.getenv("PORT", 8000)
     mcp.run(transport="http", host="0.0.0.0", port=PORT)

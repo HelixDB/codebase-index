@@ -156,6 +156,20 @@ QUERY updateFile(file_id: ID, text: String, extracted_at: Date) =>
     file <- N<File>(file_id)::UPDATE({text:text, extracted_at: extracted_at})
     RETURN file
 
+// Delete Folder
+QUERY deleteFolder(folder_id: ID) => 
+    DROP N<Folder>(folder_id)::InE<Folder_to_Folder>
+    DROP N<Folder>(folder_id)::InE<Root_to_Folder>
+    DROP N<Folder>(folder_id)
+    RETURN "success"
+
+// Delete File
+QUERY deleteFile(file_id: ID) => 
+    DROP N<File>(file_id)::InE<Folder_to_File>
+    DROP N<File>(file_id)::InE<Root_to_File>
+    DROP N<File>(file_id)
+    RETURN "success"
+
 // Delete Entity
 QUERY deleteSuperEntity(entity_id: ID) => 
     DROP N<Entity>(entity_id)::InE<File_to_Entity>
