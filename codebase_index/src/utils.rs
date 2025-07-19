@@ -41,7 +41,7 @@ lazy_static! {
         .expect("Failed to create HTTP client");
 
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(900).unwrap()));
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(1000).unwrap()));
 }
 
 // Chunk entity text
@@ -68,16 +68,17 @@ pub async fn embed_entity_async(text: String) -> Result<Vec<f64>> {
         Err(_) => return Err(anyhow::anyhow!("GEMINI_API_KEY environment variable not set"))
     };
 
-    let res = embedding_client.post("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent")
+    let res = embedding_client.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent")
         .header("x-goog-api-key", api_key)
         .header("Content-Type", "application/json")
         .json(&json!({
-            "model": "models/text-embedding-004",
+            "model": "models/gemini-embedding-001",
             "content": {
                 "parts": [{
                     "text": text,
                 }]
-            }
+            },
+            "task_type": "SEMANTIC_SIMILARITY"
         }))
         .send()
         .await?;

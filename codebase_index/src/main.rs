@@ -416,35 +416,22 @@ pub fn update_folder(
                         if diff_sec > update_interval.try_into().unwrap() {
                             println!("File {} is out of date", file_name);
                             let _ = update_file(
-                                path_buf_clone,
-                                file_id,
-                                port,
-                                index_types_inner,
-                                runtime_inner,
-                                tx_clone.clone(),
+                                path_buf_clone, file_id, port,
+                                index_types_inner, runtime_inner, tx_clone.clone(),
                             );
                         }
                     } else {
                         println!("File {} last modified time not available", file_name);
                         let _ = update_file(
-                            path_buf_clone,
-                            file_id,
-                            port,
-                            index_types_inner,
-                            runtime_inner,
-                            tx_clone.clone(),
+                            path_buf_clone, file_id, port,
+                            index_types_inner, runtime_inner, tx_clone.clone(),
                         );
                     }
                 } else {
                     println!("File {} does not exist", file_name);
                     let _ = process_file(
-                        path_buf_clone,
-                        folder_id_clone,
-                        false,
-                        port,
-                        index_types_inner,
-                        runtime_inner,
-                        tx_clone.clone(),
+                        path_buf_clone, folder_id_clone, false, port,
+                        index_types_inner, runtime_inner, tx_clone.clone(),
                     );
                 }
             });
@@ -562,33 +549,33 @@ pub fn update_file(
                                         TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
                                         
                                         // Process chunks in parallel
-                                        // chunks.par_iter().for_each(|chunk| {
-                                        //     let chunk_clone = chunk.clone();
-                                        //     let entity_id_clone = entity_id.to_string();
+                                        chunks.par_iter().for_each(|chunk| {
+                                            let chunk_clone = chunk.clone();
+                                            let entity_id_clone = entity_id.to_string();
                                             
-                                        //     // Increment thread counter for embedding
-                                        //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                                            // Increment thread counter for embedding
+                                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
                                             
-                                        //     // Use a guard to ensure counter is decremented when thread exits
-                                        //     struct EmbedThreadGuard;
-                                        //     impl Drop for EmbedThreadGuard {
-                                        //         fn drop(&mut self) {
-                                        //             ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                        //         }
-                                        //     }
-                                        //     let _embed_guard = EmbedThreadGuard;
+                                            // Use a guard to ensure counter is decremented when thread exits
+                                            struct EmbedThreadGuard;
+                                            impl Drop for EmbedThreadGuard {
+                                                fn drop(&mut self) {
+                                                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                                                }
+                                            }
+                                            let _embed_guard = EmbedThreadGuard;
                                             
-                                        //     // Generate embedding
-                                        //     let job = utils::EmbeddingJob {
-                                        //         chunk: chunk_clone,
-                                        //         entity_id: entity_id_clone,
-                                        //         port,
-                                        //     };
-                                        //     let tx_clone = tx.clone();
-                                        //     if let Err(e) = tx_clone.blocking_send(job) {
-                                        //         eprintln!("Failed to send embedding job: {}", e);
-                                        //     }
-                                        // });
+                                            // Generate embedding
+                                            let job = utils::EmbeddingJob {
+                                                chunk: chunk_clone,
+                                                entity_id: entity_id_clone,
+                                                port,
+                                            };
+                                            let tx_clone = tx.clone();
+                                            if let Err(e) = tx_clone.blocking_send(job) {
+                                                eprintln!("Failed to send embedding job: {}", e);
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -990,29 +977,29 @@ fn process_file(
                                         TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
                                         
                                         // Process chunks in parallel
-                                        // chunks.par_iter().for_each(|chunk| {
-                                        //     let chunk_clone = chunk.clone();
-                                        //     let entity_id_clone = entity_id.to_string();
+                                        chunks.par_iter().for_each(|chunk| {
+                                            let chunk_clone = chunk.clone();
+                                            let entity_id_clone = entity_id.to_string();
                                             
-                                        //     // Increment thread counter for embedding
-                                        //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                                            // Increment thread counter for embedding
+                                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
                                             
-                                        //     // Use a guard to ensure counter is decremented when thread exits
-                                        //     struct EmbedThreadGuard;
-                                        //     impl Drop for EmbedThreadGuard {
-                                        //         fn drop(&mut self) {
-                                        //             ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                        //         }
-                                        //     }
-                                        //     let _embed_guard = EmbedThreadGuard;
+                                            // Use a guard to ensure counter is decremented when thread exits
+                                            struct EmbedThreadGuard;
+                                            impl Drop for EmbedThreadGuard {
+                                                fn drop(&mut self) {
+                                                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                                                }
+                                            }
+                                            let _embed_guard = EmbedThreadGuard;
                                             
-                                        //     // Generate embedding
-                                        //     let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
-                                        //     let tx_clone = tx.clone();
-                                        //     if let Err(e) = tx_clone.blocking_send(job) {
-                                        //         eprintln!("Failed to send embedding job: {}", e);
-                                        //     }
-                                        // });
+                                            // Generate embedding
+                                            let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                                            let tx_clone = tx.clone();
+                                            if let Err(e) = tx_clone.blocking_send(job) {
+                                                eprintln!("Failed to send embedding job: {}", e);
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -1137,23 +1124,23 @@ fn process_entity(
                         // println!("Chunking entity: {}", code_entity.text);
 
                         // Process chunks in parallel using rayon
-                        // chunks.par_iter().for_each(|chunk| {
-                        //     let chunk_clone = chunk.clone();
-                        //     let entity_id_clone = entity_id.clone();
+                        chunks.par_iter().for_each(|chunk| {
+                            let chunk_clone = chunk.clone();
+                            let entity_id_clone = entity_id.clone();
 
-                        //     // Increment thread counter
-                        //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                            // Increment thread counter
+                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
 
-                        //     // Send embedding job to async background worker via mpsc channel
-                        //     let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
-                        //     let tx_clone = tx.clone();
-                        //     if let Err(e) = tx_clone.blocking_send(job) {
-                        //         eprintln!("Failed to send embedding job: {}", e);
-                        //     }
+                            // Send embedding job to async background worker via mpsc channel
+                            let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                            let tx_clone = tx.clone();
+                            if let Err(e) = tx_clone.blocking_send(job) {
+                                eprintln!("Failed to send embedding job: {}", e);
+                            }
 
-                        //     // Decrement counters
-                        //     ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                        // });
+                            // Decrement counters
+                            ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                        });
                     }
 
                     // Recursively process children of entity in parallel
