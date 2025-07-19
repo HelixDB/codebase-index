@@ -155,6 +155,7 @@ pub fn get_language(file_path: &Path) -> Option<tree_sitter::Language> {
         Some("c") | Some("h") => Some(tree_sitter_c::LANGUAGE.into()),
         Some("ts") => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Some("tsx") => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        Some("js") | Some("jsx") => Some(tree_sitter_javascript::LANGUAGE.into()),
         _ => None,
     }
 }

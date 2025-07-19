@@ -599,16 +599,9 @@ pub fn update_file(
             
             // Process entity and its children
             if let Err(e) = process_entity(
-                *entity,
-                &source_code_clone,
-                file_id_clone,
-                port,
-                true,
-                current_order,
-                extension_clone,
-                index_types_clone,
-                runtime_clone,
-                tx.clone(),
+                *entity,&source_code_clone,file_id_clone,
+                port,true,current_order,extension_clone,
+                index_types_clone,runtime_clone,tx.clone()
             ) {
                 eprintln!("Error processing entity: {}", e);
             }
@@ -1103,6 +1096,8 @@ fn process_entity(
             index_type = "cpp".to_string();
         } else if extension == "h" {
             index_type = "c".to_string();
+        } else if extension == "js" || extension == "jsx" {
+            index_type = "js".to_string();
         }
 
         if let Some(types) = index_types.get(&index_type) {
