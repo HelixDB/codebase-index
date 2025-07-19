@@ -1,4 +1,5 @@
 mod utils;
+mod queries;
 
 // External crates
 use anyhow::Result;
@@ -22,20 +23,20 @@ use std::collections::HashMap;
 
 // Internal utility functions
 use utils::{chunk_entity, embed_entity_async, post_request_async, EmbeddingJob, get_language, post_request, CodeEntity};
+use queries::{get_root_folders, get_root_files, get_sub_folders, get_folder_files};
 
 /// Main entry point for the codebase ingestion tool
 ///
 /// # Arguments (command line)
 /// 1. path: Directory path to index (default: "sample")
 /// 2. port: Port number for Helix server (default: 6969)
-/// 3. concur_limit: Maximum concurrent operations (default: 36)
-/// 4. rate_limit: Embedding API rate limit in requests per minute (default: 60)
+/// 3. concur_limit: Maximum concurrent operations (default: 1000)
 fn main() -> Result<()> {
     // Parse command line arguments with defaults
     let args: Vec<String> = env::args().collect();
 
     let default_port = 6969;
-    let max_concur = 1000;
+    let max_concur = num_cpus::get().saturating_mul(2);
     let update_interval = 10;
 
     // Get arguments
@@ -161,42 +162,10 @@ pub fn update(
         return Err(anyhow::anyhow!("Root name does not match"));
     }
 
-    // Get root folders
-    let url = format!("http://localhost:{}/{}", port, "getRootFolders");
-    let root_folder_res = post_request(&url, json!({ "root_id": root_id }), &runtime)?;
-    let root_folders = root_folder_res
-        .get("folders")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("Root ID not found"))?;
-
-    let mut root_folder_name_ids = HashMap::new();
-
-    for folder in root_folders {
-        let folder_id = folder.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Folder ID not found"))?;
-        let folder_name = folder.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Folder name not found"))?;
-        root_folder_name_ids.insert(folder_name.to_string(), folder_id.to_string());
-    }
-
+    let root_folder_name_ids = get_root_folders(root_id.clone(), &runtime, port)?;
     // println!("Root folder IDs: {:#?}", root_folder_name_ids);
 
-    // Get root files
-    let url = format!("http://localhost:{}/{}", port, "getRootFiles");
-    let payload = json!({ "root_id": root_id });
-    let root_file_res = post_request(&url, payload, &runtime)?;
-    let root_files = root_file_res
-        .get("files")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("Root ID not found"))?;
-
-    let mut root_file_name_ids: HashMap<String, (String, String)> = HashMap::new();
-
-    for file in root_files {
-        let file_id = file.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
-        let file_name = file.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File name not found"))?;
-        let file_extracted_at = file.get("extracted_at").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File extracted at not found"))?;
-        root_file_name_ids.insert(file_name.to_string(), (file_id.to_string(), file_extracted_at.to_string()));
-    }
-
+    let root_file_name_ids = get_root_files(root_id.clone(), &runtime, port)?;
     // println!("Root file IDs: {:#?}", root_file_name_ids);
 
     let mut walker_builder = WalkBuilder::new(&root_path);
@@ -240,59 +209,73 @@ pub fn update(
 
             // Process the file using the thread pool
             let path_buf_clone = path_buf.clone();
-            let root_id_clone = root_id.clone();
             let index_types_inner = Arc::clone(&index_types_clone);
             let runtime_inner = Arc::clone(&runtime_clone);
-            let root_file_name_ids_clone = root_file_name_ids.clone();
             
-            rayon::spawn(move || {
-                // Use a guard to ensure counter is decremented when thread exits
-                struct ThreadGuard;
-                impl Drop for ThreadGuard {
-                    fn drop(&mut self) {
-                        ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                    }
+            // Use a guard to ensure counter is decremented when thread exits
+            struct ThreadGuard;
+            impl Drop for ThreadGuard {
+                fn drop(&mut self) {
+                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
                 }
-                let _guard = ThreadGuard;
+            }
+            let _guard = ThreadGuard;
 
-                let file_name = path_buf_clone.file_name().unwrap().to_str().unwrap();
-                
-                if root_file_name_ids_clone.contains_key(file_name){
-                    let file_id = root_file_name_ids_clone.get(file_name).unwrap().0.to_string();
-                    let file_extracted_at = root_file_name_ids_clone.get(file_name).unwrap().1.to_string();
-                    let metadata = fs::metadata(&path_buf_clone).expect("Failed to get metadata");
-                    if let Ok(last_modified) = metadata.modified() {
-                        let date_modified = DateTime::<Utc>::from(last_modified);
-                        
-                        let date_extracted = DateTime::parse_from_rfc3339(&file_extracted_at)
-                            .expect("Failed to parse date")
-                            .with_timezone(&Utc);
+            let file_name = path_buf_clone.file_name().unwrap().to_str().unwrap();
+            
+            if root_file_name_ids.contains_key(file_name){
+                let file_id = root_file_name_ids.get(file_name).unwrap().0.to_string();
+                let file_extracted_at = root_file_name_ids.get(file_name).unwrap().1.to_string();
+                let metadata = fs::metadata(&path_buf_clone).expect("Failed to get metadata");
+                if let Ok(last_modified) = metadata.modified() {
+                    let date_modified = DateTime::<Utc>::from(last_modified);
+                    
+                    let date_extracted = DateTime::parse_from_rfc3339(&file_extracted_at)
+                        .expect("Failed to parse date")
+                        .with_timezone(&Utc);
 
-                        let diff_sec = date_modified.signed_duration_since(date_extracted).num_seconds();
-                        if diff_sec > update_interval.try_into().unwrap() {
-                            println!("File {} is out of date", file_name);
-                            let _ = update_file(
-                                path_buf_clone,file_id,port,
-                                index_types_inner,runtime_inner,tx_clone.clone()
-                            );
-                        }
-                    } else {
-                        println!("File {} last modified time not available", file_name);
+                    let diff_sec = date_modified.signed_duration_since(date_extracted).num_seconds();
+                    if diff_sec > update_interval.try_into().unwrap() {
+                        println!("File {} is out of date", file_name);
                         let _ = update_file(
                             path_buf_clone,file_id,port,
-                            index_types_inner,runtime_inner,tx_clone.clone()
+                            index_types_inner,runtime_inner,tx_clone
                         );
                     }
                 } else {
-                    println!("File {} does not exist", file_name);
-                    let _ = process_file(
-                        path_buf_clone, root_id_clone, true, 
-                        port, index_types_inner, runtime_inner, tx_clone.clone()
+                    println!("File {} last modified time not available", file_name);
+                    let _ = update_file(
+                        path_buf_clone,file_id,port,
+                        index_types_inner,runtime_inner,tx_clone
                     );
                 }
-            });
+            } else {
+                println!("File {} does not exist", file_name);
+                let _ = process_file(
+                    path_buf_clone, root_id.clone(), true, 
+                    port, index_types_inner, runtime_inner, tx_clone
+                );
+            }
         }
     });
+
+    // Find folders that are not in the index
+    let unseen_folders = root_folder_name_ids.keys()
+        .filter(|folder_name| !entries.iter().any(|entry| entry.path().file_name().unwrap().to_str().unwrap().to_string() == folder_name.to_string()))
+        .collect::<Vec<_>>();
+
+    unseen_folders.par_iter().for_each(|folder_name| {
+        let folder_id = root_folder_name_ids.get(&folder_name.to_string()).unwrap().to_string();
+        let runtime_clone = Arc::clone(&runtime);
+        let _ = delete_folder(folder_id, port, runtime_clone);
+    });
+
+    let unseen_files = root_file_name_ids.keys()
+        .filter(|file_name| !entries.iter().any(|entry| entry.path().file_name().unwrap().to_str().unwrap().to_string() == file_name.to_string()))
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+
+    delete_files(unseen_files.clone(), root_file_name_ids.clone(), runtime.clone(), port)?;
 
     Ok(())
 }
@@ -306,42 +289,10 @@ pub fn update_folder(
     tx: tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
     update_interval: u64,
 ) -> Result<()> {
-    let url = format!("http://localhost:{}/{}", port, "getSubFolders");
-    let payload = json!({ "folder_id": folder_id });
-    let folder_res = post_request(&url, payload, &runtime)?;
-    let subfolders = folder_res
-        .get("subfolders")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("Folder ID not found"))?;
-
-    let mut subfolder_name_ids = HashMap::new();
-
-    for folder in subfolders {
-        let folder_id = folder.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Folder ID not found"))?;
-        let folder_name = folder.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Folder name not found"))?;
-        subfolder_name_ids.insert(folder_name.to_string(), folder_id.to_string());
-    }
-
+    let subfolder_name_ids  = get_sub_folders(folder_id.clone(), &runtime, port)?;
     // println!("Subfolder IDs: {:#?}", subfolder_name_ids);
 
-    // Get folder files
-    let url = format!("http://localhost:{}/{}", port, "getFolderFiles");
-    let payload = json!({ "folder_id": folder_id });
-    let folder_file_res = post_request(&url, payload, &runtime)?;
-    let folder_files = folder_file_res
-        .get("files")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("Folder ID not found"))?;
-
-    let mut folder_file_name_ids: HashMap<String, (String, String)> = HashMap::new();
-
-    for file in folder_files {
-        let file_id = file.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
-        let file_name = file.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File name not found"))?;
-        let file_extracted_at = file.get("extracted_at").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File extracted at not found"))?;
-        folder_file_name_ids.insert(file_name.to_string(), (file_id.to_string(), file_extracted_at.to_string()));
-    }
-
+    let folder_file_name_ids = get_folder_files(folder_id.clone(), &runtime, port)?;
     // println!("Subfolder file IDs: {:#?}", folder_file_name_ids);
 
     let mut walker_builder = WalkBuilder::new(&current_path);
@@ -385,58 +336,72 @@ pub fn update_folder(
 
             // Process the file using the thread pool
             let path_buf_clone = path_buf.clone();
-            let folder_id_clone = folder_id.clone();
             let index_types_inner = Arc::clone(&index_types_clone);
             let runtime_inner = Arc::clone(&runtime_clone);
-            let folder_file_name_ids_clone = folder_file_name_ids.clone();
             
-            rayon::spawn(move || {
-                // Use a guard to ensure counter is decremented when thread exits
-                struct ThreadGuard;
-                impl Drop for ThreadGuard {
-                    fn drop(&mut self) {
-                        ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                    }
+            // Use a guard to ensure counter is decremented when thread exits
+            struct ThreadGuard;
+            impl Drop for ThreadGuard {
+                fn drop(&mut self) {
+                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
                 }
-                let _guard = ThreadGuard;
+            }
+            let _guard = ThreadGuard;
 
-                let file_name = path_buf_clone.file_name().unwrap().to_str().unwrap();
-                
-                if folder_file_name_ids_clone.contains_key(file_name){
-                    let file_id = folder_file_name_ids_clone.get(file_name).unwrap().0.to_string();
-                    let file_extracted_at = folder_file_name_ids_clone.get(file_name).unwrap().1.to_string();
-                    let metadata = fs::metadata(&path_buf_clone).expect("Failed to get metadata");
-                    if let Ok(last_modified) = metadata.modified() {
-                        let date_modified = DateTime::<Utc>::from(last_modified);
-                        let date_extracted = DateTime::parse_from_rfc3339(&file_extracted_at)
-                            .expect("Failed to parse date")
-                            .with_timezone(&Utc);
+            let file_name = path_buf_clone.file_name().unwrap().to_str().unwrap();
+            
+            if folder_file_name_ids.contains_key(file_name){
+                let file_id = folder_file_name_ids.get(file_name).unwrap().0.to_string();
+                let file_extracted_at = folder_file_name_ids.get(file_name).unwrap().1.to_string();
+                let metadata = fs::metadata(&path_buf_clone).expect("Failed to get metadata");
+                if let Ok(last_modified) = metadata.modified() {
+                    let date_modified = DateTime::<Utc>::from(last_modified);
+                    let date_extracted = DateTime::parse_from_rfc3339(&file_extracted_at)
+                        .expect("Failed to parse date")
+                        .with_timezone(&Utc);
 
-                        let diff_sec = date_modified.signed_duration_since(date_extracted).num_seconds();
-                        if diff_sec > update_interval.try_into().unwrap() {
-                            println!("File {} is out of date", file_name);
-                            let _ = update_file(
-                                path_buf_clone, file_id, port,
-                                index_types_inner, runtime_inner, tx_clone.clone(),
-                            );
-                        }
-                    } else {
-                        println!("File {} last modified time not available", file_name);
+                    let diff_sec = date_modified.signed_duration_since(date_extracted).num_seconds();
+                    if diff_sec > update_interval.try_into().unwrap() {
+                        println!("File {} is out of date", file_name);
                         let _ = update_file(
                             path_buf_clone, file_id, port,
-                            index_types_inner, runtime_inner, tx_clone.clone(),
+                            index_types_inner, runtime_inner, tx_clone,
                         );
                     }
                 } else {
-                    println!("File {} does not exist", file_name);
-                    let _ = process_file(
-                        path_buf_clone, folder_id_clone, false, port,
-                        index_types_inner, runtime_inner, tx_clone.clone(),
+                    println!("File {} last modified time not available", file_name);
+                    let _ = update_file(
+                        path_buf_clone, file_id, port,
+                        index_types_inner, runtime_inner, tx_clone,
                     );
                 }
-            });
+            } else {
+                println!("File {} does not exist", file_name);
+                let _ = process_file(
+                    path_buf_clone, folder_id.clone(), false, port,
+                    index_types_inner, runtime_inner, tx_clone
+                );
+            }
         }
     });
+
+    // Find folders that are not in the index
+    let unseen_folders = subfolder_name_ids.keys()
+        .filter(|folder_name| !entries.iter().any(|entry| entry.path().file_name().unwrap().to_str().unwrap().to_string() == folder_name.to_string()))
+        .collect::<Vec<_>>();
+
+    unseen_folders.par_iter().for_each(|folder_name| {
+        let folder_id = subfolder_name_ids.get(&folder_name.to_string()).unwrap().to_string();
+        let runtime_clone = Arc::clone(&runtime);
+        let _ = delete_folder(folder_id, port, runtime_clone);
+    });
+
+    let unseen_files = folder_file_name_ids.keys()
+        .filter(|file_name| !entries.iter().any(|entry| entry.path().file_name().unwrap().to_str().unwrap().to_string() == file_name.to_string()))
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+
+    delete_files(unseen_files.clone(), folder_file_name_ids.clone(), runtime.clone(), port)?;
 
     Ok(())
 }
@@ -491,108 +456,8 @@ pub fn update_file(
         let order_counter = Arc::new(AtomicUsize::new(1));
         
         // Process entities in parallel
-        children.par_iter().for_each(|entity| {
-            // Increment thread counter
-            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-            
-            // Use a guard to ensure counter is decremented when thread exits
-            struct ThreadGuard;
-            impl Drop for ThreadGuard {
-                fn drop(&mut self) {
-                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _guard = ThreadGuard;
-            
-            // Get the current order value and increment it atomically
-            let current_order = order_counter.fetch_add(1, Ordering::SeqCst);
-            
-            // Clone necessary variables for the closure
-            let source_code_clone = source_code.to_string();
-            let file_id_clone = file_id.to_string();
-            let extension_clone = extension.to_string();
-            let index_types_clone = Arc::clone(&index_types);
-            let runtime_clone = Arc::clone(&runtime);
-            
-            // Get index_types for file extension
-            if let Some(types) = index_types.get(&extension) {
-                if let Some(types_array) = types.as_array() {
-                    // Check if ALL is not in index_types
-                    if types_array.iter().any(|v| v.as_str().map_or(false, |s| s != "ALL")) {
-                        // Super entity type in index_types
-                        if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity.kind().to_string())){
-                            // Has super content (need to create super entity and embed before processing current super entity)
-                            let entity_start_byte = entity.start_byte();
-                            let entity_end_byte = entity.end_byte();
-                            let entity_content = &source_code_clone[entity_start_byte..entity_end_byte].to_string();
-                            
-                            let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
-                            let payload = json!({
-                                "file_id": file_id_clone.clone(),
-                                "entity_type": entity.kind().to_string(),
-                                "text": entity_content,
-                                "start_byte": entity_start_byte,
-                                "end_byte": entity_end_byte,
-                                "order": current_order,
-                            });
-                            
-                            // Send request to create entity
-                            if let Ok(entity_response) = post_request(&url, payload, &runtime_clone) {
-                                if let Some(entity_id) = entity_response
-                                    .get("entity")
-                                    .and_then(|v| v.get("id"))
-                                    .and_then(|v| v.as_str())
-                                {
-                                    // Chunk entity text
-                                    if let Ok(chunks) = chunk_entity(&entity_content) {
-                                        // Increment the total chunks counter
-                                        TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
-                                        
-                                        // Process chunks in parallel
-                                        chunks.par_iter().for_each(|chunk| {
-                                            let chunk_clone = chunk.clone();
-                                            let entity_id_clone = entity_id.to_string();
-                                            
-                                            // Increment thread counter for embedding
-                                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                                            
-                                            // Use a guard to ensure counter is decremented when thread exits
-                                            struct EmbedThreadGuard;
-                                            impl Drop for EmbedThreadGuard {
-                                                fn drop(&mut self) {
-                                                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                                }
-                                            }
-                                            let _embed_guard = EmbedThreadGuard;
-                                            
-                                            // Generate embedding
-                                            let job = utils::EmbeddingJob {
-                                                chunk: chunk_clone,
-                                                entity_id: entity_id_clone,
-                                                port,
-                                            };
-                                            let tx_clone = tx.clone();
-                                            if let Err(e) = tx_clone.blocking_send(job) {
-                                                eprintln!("Failed to send embedding job: {}", e);
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Process entity and its children
-            if let Err(e) = process_entity(
-                *entity,&source_code_clone,file_id_clone,
-                port,true,current_order,extension_clone,
-                index_types_clone,runtime_clone,tx.clone()
-            ) {
-                eprintln!("Error processing entity: {}", e);
-            }
-        });
+        ingest_entities(&children, &source_code, file_id.to_string(), port,
+            extension.to_string(), index_types, &runtime, &tx, &order_counter)?;
     // File is not supported by Tree Sitter
     } else {
         // Create file without entities
@@ -604,6 +469,68 @@ pub fn update_file(
         println!("\nUpdating unsupported file: {}", file_name);
         post_request(&url, payload, &runtime)?;
     }
+    
+    Ok(())
+}
+
+pub fn delete_folder(
+    folder_id: String,
+    port: u16,
+    runtime: Arc<Runtime>,
+) -> Result<()> {
+    let subfolder_name_ids  = get_sub_folders(folder_id.clone(), &runtime, port)?;
+    // println!("Subfolder IDs: {:#?}", subfolder_name_ids);
+
+    // Find folders that are not in the index
+    let unseen_folders = subfolder_name_ids.keys().collect::<Vec<_>>();
+
+    unseen_folders.par_iter().for_each(|folder_name| {
+        let sub_folder_id = subfolder_name_ids.get(&folder_name.to_string()).unwrap().to_string();
+        let runtime_clone = Arc::clone(&runtime);
+        let _ = delete_folder(sub_folder_id, port, runtime_clone);
+    });
+
+    // Get folder files
+    let folder_file_name_ids = get_folder_files(folder_id.clone(), &runtime, port)?;
+    // println!("Subfolder file IDs: {:#?}", folder_file_name_ids);
+
+    let unseen_files = folder_file_name_ids.keys().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    delete_files(unseen_files.clone(), folder_file_name_ids.clone(), runtime.clone(), port)?;
+
+    let url = format!("http://localhost:{}/{}", port, "deleteFolder");
+    let payload = json!({ "folder_id": folder_id });
+    post_request(&url, payload, &runtime)?;
+    Ok(())
+}
+
+pub fn delete_files(
+    unseen_files: Vec<String>,
+    file_name_ids: HashMap<String, (String, String)>,
+    runtime: Arc<Runtime>,
+    port: u16
+) -> Result<()> {
+    unseen_files.par_iter().for_each(|file_name| {
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+
+        // Use a guard to ensure counter is decremented when thread exits
+        struct ThreadGuard;
+        impl Drop for ThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _guard = ThreadGuard;
+
+        let runtime_inner = Arc::clone(&runtime);
+        let file_id = file_name_ids.get(&file_name.to_string()).unwrap().0.clone();
+
+        let url = format!("http://localhost:{}/{}", port, "deleteFile");
+        let payload = json!({ "file_id": file_id });
+        let _ = post_request(&url, payload, &runtime_inner);
+        
+        let _ = delete_entities(file_id, true, port, runtime_inner);
+    });
     Ok(())
 }
 
@@ -613,79 +540,51 @@ pub fn delete_entities(
     port: u16,
     runtime: Arc<Runtime>,
 ) -> Result<()> {
+    let url;
+    let body;
+    let res_index;
+    let delete_url;
     if is_super {
-         // Get Sub Entities
-        let url = format!("http://localhost:{}/{}", port, "getFileEntities");
-        let response = post_request(&url, json!({ "file_id": parent_id }), &runtime)?;
-        let super_entities = response
-            .get("entity")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("Super entities not found"))?;
-
-        let super_entity_ids: Vec<String> = super_entities
-            .iter()
-            .map(|v| v.get("id").and_then(|v| v.as_str()).unwrap().to_string())
-            .collect();
-
-        // println!("Deleting {} super entities", super_entity_ids.len());
-        super_entity_ids.par_iter().for_each(|super_entity_id| {
-            // Increment thread counter
-            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                
-            // Use a guard to ensure counter is decremented when thread exits
-            struct ThreadGuard;
-            impl Drop for ThreadGuard {
-                fn drop(&mut self) {
-                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _guard = ThreadGuard;
-
-            let runtime_clone = Arc::clone(&runtime);
-
-            let _ = delete_entities(super_entity_id.to_string(), false, port, runtime_clone);
-
-            // Delete super entity
-            let url = format!("http://localhost:{}/{}", port, "deleteSuperEntity");
-            let _ = post_request(&url, json!({ "entity_id": super_entity_id }), &runtime);
-        });
+        url = format!("http://localhost:{}/{}", port, "getFileEntities");
+        body = json!({ "file_id": parent_id });
+        res_index = "entity";
+        delete_url = format!("http://localhost:{}/{}", port, "deleteSuperEntity");
     } else {
-         // Get Sub Entities
-        let url = format!("http://localhost:{}/{}", port, "getSubEntities");
-        let response = post_request(&url, json!({ "entity_id": parent_id }), &runtime)?;
-        let sub_entities = response
-            .get("entities")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("Sub entities not found"))?;
-
-        let sub_entity_ids: Vec<String> = sub_entities
-            .iter()
-            .map(|v| v.get("id").and_then(|v| v.as_str()).unwrap().to_string())
-            .collect();
-
-        // println!("Deleting {} sub entities", sub_entity_ids.len());
-        sub_entity_ids.par_iter().for_each(|sub_entity_id| {
-            // Increment thread counter
-            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                
-            // Use a guard to ensure counter is decremented when thread exits
-            struct ThreadGuard;
-            impl Drop for ThreadGuard {
-                fn drop(&mut self) {
-                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _guard = ThreadGuard;
-
-            let runtime_clone = Arc::clone(&runtime);
-
-            let _ = delete_entities(sub_entity_id.to_string(), false, port, runtime_clone);
-
-            // Delete sub entity
-            let url = format!("http://localhost:{}/{}", port, "deleteSubEntity");
-            let _ = post_request(&url, json!({ "entity_id": sub_entity_id }), &runtime);
-        });
+        url = format!("http://localhost:{}/{}", port, "getSubEntities");
+        body = json!({ "entity_id": parent_id });
+        res_index = "entities";
+        delete_url = format!("http://localhost:{}/{}", port, "deleteSubEntity");
     }
+
+    let response = post_request(&url, body, &runtime)?;
+    let entities = response
+        .get(res_index)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("Entities not found"))?;
+
+    let entity_ids: Vec<String> = entities
+        .iter()
+        .map(|v| v.get("id").and_then(|v| v.as_str()).unwrap().to_string())
+        .collect();
+
+    entity_ids.par_iter().for_each(|entity_id| {
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+
+        struct ThreadGuard;
+        impl Drop for ThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _guard = ThreadGuard;
+
+        let runtime_clone = Arc::clone(&runtime);
+
+        let _ = delete_entities(entity_id.to_string(), false, port, runtime_clone);
+
+        let _ = post_request(&delete_url, json!({ "entity_id": entity_id }), &runtime);
+    });
+
     Ok(())
 }
 
@@ -755,6 +654,7 @@ fn populate(
         let parent_id_clone = parent_id.clone();
         let index_types_clone = Arc::clone(&index_types);
         let runtime_clone = Arc::clone(&runtime);
+        let tx_clone = tx.clone();
 
         if path_buf.is_dir() {
             // Get folder information
@@ -783,27 +683,22 @@ fn populate(
                         // Use rayon's spawn to process the folder in the thread pool
                         let path_buf_clone = path_buf.clone();
                         let folder_name_clone = folder_name.to_string();
-                        let index_types_inner = Arc::clone(&index_types_clone);
-                        let runtime_inner = Arc::clone(&runtime_clone);
-                        let tx_clone = tx.clone();
                         
-                        rayon::spawn(move || {
-                            // Use a guard to ensure counter is decremented when thread exits
-                            struct ThreadGuard;
-                            impl Drop for ThreadGuard {
-                                fn drop(&mut self) {
-                                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                }
+                        // Use a guard to ensure counter is decremented when thread exits
+                        struct ThreadGuard;
+                        impl Drop for ThreadGuard {
+                            fn drop(&mut self) {
+                                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
                             }
-                            let _guard = ThreadGuard;
+                        }
+                        let _guard = ThreadGuard;
 
-                            if let Err(e) = populate(
-                                path_buf_clone,folder_id,port,
-                                false,index_types_inner,runtime_inner, tx_clone.clone()
-                            ) {
-                                eprintln!("Error populating folder {}: {}",folder_name_clone, e);
-                            }
-                        });
+                        if let Err(e) = populate(
+                            path_buf_clone,folder_id,port,
+                            false,index_types_clone,runtime_clone, tx_clone
+                        ) {
+                            eprintln!("Error populating folder {}: {}",folder_name_clone, e);
+                        }
                     } else {
                         eprintln!("Failed to extract folder ID from response for: {}", folder_name);
                     }
@@ -824,22 +719,20 @@ fn populate(
             let runtime_inner = Arc::clone(&runtime_clone);
             let tx_clone = tx.clone();
             
-            rayon::spawn(move || {
-                // Use a guard to ensure counter is decremented when thread exits
-                struct ThreadGuard;
-                impl Drop for ThreadGuard {
-                    fn drop(&mut self) {
-                        ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                    }
+            // Use a guard to ensure counter is decremented when thread exits
+            struct ThreadGuard;
+            impl Drop for ThreadGuard {
+                fn drop(&mut self) {
+                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
                 }
-                let _guard = ThreadGuard;
+            }
+            let _guard = ThreadGuard;
 
-                process_file(
-                    path_buf_clone,parent_id_clone2,is_super,
-                    port, index_types_inner,runtime_inner,tx_clone.clone()
-                )
-                .ok();
-            });
+            process_file(
+                path_buf_clone,parent_id_clone2,is_super,
+                port, index_types_inner,runtime_inner,tx_clone.clone()
+            )
+            .ok();
         }
     });
 
@@ -919,104 +812,8 @@ fn process_file(
         let order_counter = Arc::new(AtomicUsize::new(1));
         
         // Process entities in parallel
-        children.par_iter().for_each(|entity| {
-            // Increment thread counter
-            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-            
-            // Use a guard to ensure counter is decremented when thread exits
-            struct ThreadGuard;
-            impl Drop for ThreadGuard {
-                fn drop(&mut self) {
-                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _guard = ThreadGuard;
-            
-            // Get the current order value and increment it atomically
-            let current_order = order_counter.fetch_add(1, Ordering::SeqCst);
-            
-            // Clone necessary variables for the closure
-            let source_code_clone = source_code.to_string();
-            let file_id_clone = file_id.to_string();
-            let extension_clone = extension.to_string();
-            let index_types_clone = Arc::clone(&index_types);
-            let runtime_clone = Arc::clone(&runtime);
-            
-            // Get index_types for file extension
-            if let Some(types) = index_types.get(&extension) {
-                if let Some(types_array) = types.as_array() {
-                    // Check if ALL is not in index_types
-                    if types_array.iter().any(|v| v.as_str().map_or(false, |s| s != "ALL")) {
-                        // Super entity type in index_types
-                        if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity.kind().to_string())){
-                            // Has super content (need to create super entity and embed before processing current super entity)
-                            let entity_start_byte = entity.start_byte();
-                            let entity_end_byte = entity.end_byte();
-                            let entity_content = &source_code_clone[entity_start_byte..entity_end_byte].to_string();
-                            
-                            let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
-                            let payload = json!({
-                                "file_id": file_id_clone.clone(),
-                                "entity_type": entity.kind().to_string(),
-                                "text": entity_content,
-                                "start_byte": entity_start_byte,
-                                "end_byte": entity_end_byte,
-                                "order": current_order,
-                            });
-                            
-                            // Send request to create entity
-                            if let Ok(entity_response) = post_request(&url, payload, &runtime_clone) {
-                                if let Some(entity_id) = entity_response
-                                    .get("entity")
-                                    .and_then(|v| v.get("id"))
-                                    .and_then(|v| v.as_str())
-                                {
-                                    // Chunk entity text
-                                    if let Ok(chunks) = chunk_entity(&entity_content) {
-                                        // Increment the total chunks counter
-                                        TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
-                                        
-                                        // Process chunks in parallel
-                                        chunks.par_iter().for_each(|chunk| {
-                                            let chunk_clone = chunk.clone();
-                                            let entity_id_clone = entity_id.to_string();
-                                            
-                                            // Increment thread counter for embedding
-                                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                                            
-                                            // Use a guard to ensure counter is decremented when thread exits
-                                            struct EmbedThreadGuard;
-                                            impl Drop for EmbedThreadGuard {
-                                                fn drop(&mut self) {
-                                                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                                }
-                                            }
-                                            let _embed_guard = EmbedThreadGuard;
-                                            
-                                            // Generate embedding
-                                            let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
-                                            let tx_clone = tx.clone();
-                                            if let Err(e) = tx_clone.blocking_send(job) {
-                                                eprintln!("Failed to send embedding job: {}", e);
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Process entity and its children
-            if let Err(e) = process_entity(
-                *entity,&source_code_clone,file_id_clone,
-                port,true,current_order,extension_clone,
-                index_types_clone,runtime_clone,tx.clone(),
-            ) {
-                eprintln!("Error processing entity: {}", e);
-            }
-        });
+        ingest_entities(&children, &source_code, file_id.to_string(), port,
+            extension.to_string(), index_types, &runtime, &tx, &order_counter)?;
     // File is not supported by Tree Sitter
     } else {
         // Create file without entities
@@ -1032,6 +829,130 @@ fn process_file(
         println!("\nProcessing unsupported file: {}", file_name);
         post_request(&url, payload, &runtime)?;
     }
+    Ok(())
+}
+
+pub fn ingest_entities(
+    children: &[Node],
+    source_code: &str,
+    file_id: String,
+    port: u16,
+    extension: String,
+    index_types: Arc<serde_json::Value>,
+    runtime: &Arc<Runtime>,
+    tx: &tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
+    order_counter: &Arc<AtomicUsize>,
+)
+-> Result<()> {
+    children.par_iter().for_each(|entity| {
+        // Increment thread counter
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+        
+        // Use a guard to ensure counter is decremented when thread exits
+        struct ThreadGuard;
+        impl Drop for ThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _guard = ThreadGuard;
+        
+        // Get the current order value and increment it atomically
+        let current_order = order_counter.fetch_add(1, Ordering::SeqCst);
+        
+        // Clone necessary variables for the closure
+        let source_code_clone = source_code.to_string();
+        let file_id_clone = file_id.to_string();
+        let extension_clone = extension.to_string();
+        let index_types_clone = index_types.clone();
+        let runtime_clone = runtime.clone();
+        
+        // Get index_types for file extension
+        if let Some(types) = index_types.get(&extension) {
+            if let Some(types_array) = types.as_array() {
+                // Check if ALL is not in index_types
+                if types_array.iter().any(|v| v.as_str().map_or(false, |s| s != "ALL")) {
+                    // Super entity type in index_types
+                    if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity.kind().to_string())){
+                        // Has super content (need to create super entity and embed before processing current super entity)
+                        let entity_start_byte = entity.start_byte();
+                        let entity_end_byte = entity.end_byte();
+                        let entity_content = &source_code_clone[entity_start_byte..entity_end_byte].to_string();
+                        
+                        let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
+                        let payload = json!({
+                            "file_id": file_id_clone.clone(),
+                            "entity_type": entity.kind().to_string(),
+                            "text": entity_content,
+                            "start_byte": entity_start_byte,
+                            "end_byte": entity_end_byte,
+                            "order": current_order,
+                        });
+                        
+                        // Send request to create entity
+                        if let Ok(entity_response) = post_request(&url, payload, &runtime_clone) {
+                            if let Some(entity_id) = entity_response
+                                .get("entity")
+                                .and_then(|v| v.get("id"))
+                                .and_then(|v| v.as_str())
+                            {
+                                // Chunk entity text
+                                if let Ok(chunks) = chunk_entity(&entity_content) {
+                                    // Increment the total chunks counter
+                                    TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
+                                    
+                                    // Process chunks in parallel
+                                    chunks.par_iter().for_each(|chunk| {
+                                        let chunk_clone = chunk.clone();
+                                        let entity_id_clone = entity_id.to_string();
+                                        
+                                        // Increment thread counter for embedding
+                                        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                                        
+                                        // Use a guard to ensure counter is decremented when thread exits
+                                        struct EmbedThreadGuard;
+                                        impl Drop for EmbedThreadGuard {
+                                            fn drop(&mut self) {
+                                                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                                            }
+                                        }
+                                        let _embed_guard = EmbedThreadGuard;
+                                        
+                                        // Generate embedding
+                                        let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                                        let tx_clone = tx.clone();
+                                        match tx_clone.try_send(job) {
+                                            Ok(_) => {},
+                                            Err(err) => {
+                                                // Channel is full; send asynchronously so this Rayon thread keeps working
+                                                let job_back = err.into_inner();
+                                                let tx_async = tx_clone.clone();
+                                                let rt = runtime_clone.clone();
+                                                rt.spawn(async move {
+                                                    if let Err(e) = tx_async.send(job_back).await {
+                                                        eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process entity and its children
+        if let Err(e) = process_entity(
+            *entity,&source_code_clone,file_id_clone,
+            port,true,current_order,extension_clone,
+            index_types_clone,runtime_clone,tx.clone()
+        ) {
+            eprintln!("Error processing entity: {}", e);
+        }
+    });
     Ok(())
 }
 
@@ -1118,10 +1039,7 @@ fn process_entity(
                     if is_super {
                         // Chunk entity text
                         let chunks = chunk_entity(&code_entity.text).unwrap();
-                        // Increment the total chunks counter
                         TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
-                        // println!("chunks length: {}", chunks.len());
-                        // println!("Chunking entity: {}", code_entity.text);
 
                         // Process chunks in parallel using rayon
                         chunks.par_iter().for_each(|chunk| {
@@ -1132,10 +1050,20 @@ fn process_entity(
                             ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
 
                             // Send embedding job to async background worker via mpsc channel
-                            let job = utils::EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                            let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
                             let tx_clone = tx.clone();
-                            if let Err(e) = tx_clone.blocking_send(job) {
-                                eprintln!("Failed to send embedding job: {}", e);
+                            match tx_clone.try_send(job) {
+                                Ok(_) => {},
+                                Err(err) => {
+                                    let job_back = err.into_inner();
+                                    let tx_async = tx_clone.clone();
+                                    let rt = runtime.clone();
+                                    rt.spawn(async move {
+                                        if let Err(e) = tx_async.send(job_back).await {
+                                            eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                        }
+                                    });
+                                }
                             }
 
                             // Decrement counters

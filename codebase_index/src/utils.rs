@@ -28,20 +28,18 @@ pub struct EmbeddingJob {
 lazy_static! {
     static ref embedding_client: reqwest::Client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(1000)
+        .pool_max_idle_per_host(3000)
         .pool_idle_timeout(Duration::from_secs(30))
         .build()
         .expect("Failed to create HTTP client");
 
     static ref helix_client: reqwest::Client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
-        .pool_max_idle_per_host(1000)
-        .pool_idle_timeout(Duration::from_secs(60))
         .build()
         .expect("Failed to create HTTP client");
 
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(1000).unwrap()));
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(3000).unwrap()));
 }
 
 // Chunk entity text
