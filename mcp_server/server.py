@@ -25,7 +25,10 @@ dotenv.load_dotenv(override=True)
 # mcp = FastMCP(name="Helix MCP", auth=auth)
 #  -- auth setup --
 
-mcp = FastMCP(name="Helix Codebase MCP")
+with open('instructions.txt', 'r') as f:
+    instructions = f.read()
+
+mcp = FastMCP(name="Helix Codebase MCP", instructions=instructions)
 db = helix.Client(local=True, port=6969, verbose=True)
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -52,7 +55,13 @@ ALLOWED_ENDPOINTS = {
     "getSuperEntity"
 }
 
-def extract_endpoints_with_types(file_path: str = "../helixdb-cfg/queries.hx") -> Dict[str, Dict[str, type]]:
+def extract_endpoints_with_types(file_path: str = None) -> Dict[str, Dict[str, type]]:
+    if file_path is None:
+        # Get the directory where this script is located
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Go up one level to the project root, then into helixdb-cfg/queries.hx
+        file_path = os.path.join(script_dir, '..', 'helixdb-cfg', 'queries.hx')
+    
     type_map = {
         'String': str,
         'ID': str, 
@@ -86,6 +95,38 @@ endpoints_with_types = extract_endpoints_with_types()
 
 @mcp.tool
 def do_query(endpoint: str, payload: Dict[str, Any]) -> List[Any]:
+    """
+    Perform a query on the codebase.
+    Allowed endpoints: [
+    "getRoot",
+    "getFolderRoot",
+    "getFileRoot",
+    "getFolder",
+    "getFolderByName",
+    "getAllFolders",
+    "getRootFolders",
+    "getSuperFolders",
+    "getSubFolders",
+    "getFileFolder",
+    "getFile",
+    "getFileContent",
+    "getFileByName",
+    "getAllFiles",
+    "getRootFiles",
+    "getFolderFiles",
+    "getFileEntities",
+    "getEntityFile",
+    "getSubEntities",
+    "getSuperEntity"
+    ]
+
+    Args:
+        endpoint (str): The endpoint to query.
+        payload (Dict[str, Any]): The payload to pass to the endpoint.
+
+
+    
+    """
     # Check if endpoint is allowed
     if endpoint not in ALLOWED_ENDPOINTS:
         raise ValueError(f"Endpoint '{endpoint}' is not allowed. Permitted endpoints: {', '.join(sorted(ALLOWED_ENDPOINTS))}")
@@ -132,6 +173,19 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
 
     print(f'Called `semantic_search_code` with query: {query} and k: {k}')
     return db.query("searchSuperEntity", {"vector": query_vector, "k": k})
+
+@mcp.resource("meta://about")
+def about():
+    return {
+        "name": "Helix Codebase MCP",
+        "description": "Provides code search, querying, and semantic embedding over a Helix-indexed codebase"
+    }
+
+@mcp.resource("meta://instructions")
+def instructions():
+    with open('instructions.txt', 'r') as f:
+        instructions = f.read()
+        return instructions
 
 if __name__ == "__main__":
     PORT = os.getenv("PORT", 8000)
