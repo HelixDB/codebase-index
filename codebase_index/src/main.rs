@@ -53,6 +53,7 @@ fn main() -> Result<()> {
     // Initialize the global thread pool with the concurrency limit
     ThreadPoolBuilder::new()
         .num_threads(concur_limit)
+        .stack_size(2 * 1024 * 1024)
         .build_global()
         .unwrap();
     
@@ -468,6 +469,14 @@ pub fn update_file(
         // Send request to update file
         println!("\nUpdating unsupported file: {}", file_name);
         post_request(&url, payload, &runtime)?;
+
+        let _ = delete_entities(file_id.to_string(), true, port, runtime.clone());
+
+        let chunks = chunk_entity(&source_code).unwrap();
+        let order_counter = Arc::new(AtomicUsize::new(1));
+        TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
+
+        process_unsupported_file(chunks, file_id.to_string(), port, order_counter, tx, runtime)?;
     }
     
     Ok(())
@@ -827,8 +836,80 @@ fn process_file(
 
         // Send request to create file
         println!("\nProcessing unsupported file: {}", file_name);
-        post_request(&url, payload, &runtime)?;
+        let response = post_request(&url, payload, &runtime)?;
+
+        let file_id = response.get("file_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
+
+        let chunks = chunk_entity(&source_code).unwrap();
+        let order_counter = Arc::new(AtomicUsize::new(1));
+        TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
+
+        process_unsupported_file(chunks, file_id.to_string(), port, order_counter, tx, runtime)?;
     }
+    Ok(())
+}
+
+pub fn process_unsupported_file(
+    chunks: Vec<String>,
+    file_id: String,
+    port: u16,
+    order_counter: Arc<AtomicUsize>,
+    tx: tokio::sync::mpsc::Sender<utils::EmbeddingJob>,
+    runtime: Arc<Runtime>,
+) -> Result<()> {
+    chunks.par_iter().for_each(|chunk| {
+        let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
+        let payload = json!({
+                "file_id": file_id,
+                "entity_type": "chunk",
+                "text": chunk,
+                "start_byte": 0,
+                "end_byte": chunk.len() as i64,
+                "order": order_counter.fetch_add(1, Ordering::SeqCst),
+            });
+
+        // Send request to create entity
+        let entity_response = post_request(&url, payload, &runtime);
+        let entity_id = match entity_response {
+            Ok(response) => response.get("entity")
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            Err(e) => {
+                eprintln!("Failed to create entity: {}", e);
+                None
+            }
+        };
+        
+        // Increment thread counter for embedding
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+        
+        // Use a guard to ensure counter is decremented when thread exits
+        struct EmbedThreadGuard;
+        impl Drop for EmbedThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _embed_guard = EmbedThreadGuard;
+        
+        // Generate embedding
+        let job = EmbeddingJob {chunk: chunk.clone(), entity_id: entity_id.unwrap(), port};
+        match tx.try_send(job) {
+            Ok(_) => {},
+            Err(err) => {
+                // Channel is full; send asynchronously so this Rayon thread keeps working
+                let job_back = err.into_inner();
+                let tx_async = tx.clone();
+                let rt = runtime.clone();
+                rt.spawn(async move {
+                    if let Err(e) = tx_async.send(job_back).await {
+                        eprintln!("Failed to send embedding job asynchronously: {}", e);
+                    }
+                });
+            }
+        }
+    });
     Ok(())
 }
 

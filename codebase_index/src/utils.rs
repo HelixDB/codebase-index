@@ -14,7 +14,6 @@ use governor::state::direct::NotKeyed;
 use governor::state::InMemoryState;
 use governor::clock::DefaultClock;
 
-
 // Job type for embedding work
 #[derive(Debug, Clone)]
 pub struct EmbeddingJob {
@@ -22,7 +21,6 @@ pub struct EmbeddingJob {
     pub entity_id: String,
     pub port: u16,
 }
-
 
 // Global HTTP client with connection pooling
 lazy_static! {
@@ -35,11 +33,16 @@ lazy_static! {
 
     static ref helix_client: reqwest::Client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
+        .pool_max_idle_per_host(1000)
+        .pool_idle_timeout(Duration::from_secs(60))
         .build()
         .expect("Failed to create HTTP client");
 
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
         RateLimiter::direct(Quota::per_minute(NonZeroU32::new(3000).unwrap()));
+
+    static ref HELIX_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(10_000).unwrap()));
 }
 
 // Chunk entity text
@@ -124,6 +127,8 @@ pub fn post_request(url: &str, body: Value, runtime: &Runtime) -> Result<Value> 
 
 // Async version of post_request
 pub async fn post_request_async(url: &str, body: Value) -> Result<Value> {
+    // HELIX_LIMITER.until_ready().await;
+
     // Use the global HTTP client with connection pooling
     let res = match helix_client.post(url).json(&body).send().await {
         Ok(response) => response,
@@ -131,10 +136,7 @@ pub async fn post_request_async(url: &str, body: Value) -> Result<Value> {
             if e.is_timeout() {
                 println!("Request timed out. Check if the server is running and responding.");
             } else if e.is_connect() {
-                println!(
-                    "Connection failed. Make sure the server is running at {}",
-                    url
-                );
+                println!("Connection failed. Make sure the server is running at {}",url);
             }
             return Err(anyhow::anyhow!("HTTP request failed: {}", e));
         }
