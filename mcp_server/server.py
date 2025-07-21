@@ -96,36 +96,34 @@ endpoints_with_types = extract_endpoints_with_types()
 @mcp.tool
 def do_query(endpoint: str, payload: Dict[str, Any]) -> List[Any]:
     """
-    Perform a query on the codebase.
-    Allowed endpoints: [
-    "getRoot",
-    "getFolderRoot",
-    "getFileRoot",
-    "getFolder",
-    "getFolderByName",
-    "getAllFolders",
-    "getRootFolders",
-    "getSuperFolders",
-    "getSubFolders",
-    "getFileFolder",
-    "getFile",
-    "getFileContent",
-    "getFileByName",
-    "getAllFiles",
-    "getRootFiles",
-    "getFolderFiles",
-    "getFileEntities",
-    "getEntityFile",
-    "getSubEntities",
-    "getSuperEntity"
-    ]
+Perform a query on the codebase.
 
-    Args:
-        endpoint (str): The endpoint to query.
-        payload (Dict[str, Any]): The payload to pass to the endpoint.
+| Endpoint | Parameters | Description |
+|----------|------------|-------------|
+| getRoot | None | Returns the root node of the codebase |
+| getFolderRoot | `folder_id` (string) | Returns the root node of a specific folder |
+| getFileRoot | `file_id` (string) | Returns the root node of a specific file |
+| getFolder | `folder_id` (string) | Returns a specific folder |
+| getFolderByName | `name` (string) | Returns a specific folder by name |
+| getAllFolders | None | Returns all folders in the codebase |
+| getRootFolders | `root_id` (string) | Returns the folders under a root |
+| getSuperFolders | `folder_id` (string) | Returns the parent folders of a folder |
+| getSubFolders | `folder_id` (string) | Returns the subfolders of a folder |
+| getFileFolder | `file_id` (string) | Returns the parent folder of a file |
+| getFile | `file_id` (string) | Returns a specific file |
+| getFileContent | `file_id` (string) | Returns the content of a specific file |
+| getRootFiles | `root_id` (string) | Returns the files under a root |
+| getAllFiles | None | Returns all files in the codebase |
+| getFileByName | `name` (string) | Returns a specific file by name |
+| getFolderFiles | `folder_id` (string) | Returns the files in a folder |
+| getFileEntities | `file_id` (string) | Returns the entities in a file |
+| getEntityFile | `entity_id` (string) | Returns the file of an entity |
+| getSubEntities | `entity_id` (string) | Returns the child entities of an entity |
+| getSuperEntity | `entity_id` (string) | Returns the parent entity of an entity |
 
-
-    
+Args:
+    endpoint (str): The endpoint to query.
+    payload (Dict[str, Any]): The payload to pass to the endpoint.
     """
     # Check if endpoint is allowed
     if endpoint not in ALLOWED_ENDPOINTS:
