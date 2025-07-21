@@ -279,64 +279,64 @@ pub fn process_unsupported_file(
     // Increment the total chunks counter
     TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
 
-    // chunks.par_iter().for_each(|chunk| {
-    //     let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
-    //     let payload = json!({
-    //             "file_id": file_id,
-    //             "entity_type": "chunk",
-    //             "text": chunk,
-    //             "start_byte": 0,
-    //             "end_byte": chunk.len() as i64,
-    //             "order": order_counter.fetch_add(1, Ordering::SeqCst),
-    //         });
+    chunks.par_iter().for_each(|chunk| {
+        let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
+        let payload = json!({
+                "file_id": file_id,
+                "entity_type": "chunk",
+                "text": chunk,
+                "start_byte": 0,
+                "end_byte": chunk.len() as i64,
+                "order": order_counter.fetch_add(1, Ordering::SeqCst),
+            });
 
-    //     // Send request to create entity
-    //     let entity_response = post_request(&url, payload, &runtime);
-    //     let entity_id = match entity_response {
-    //         Ok(response) => response.get("entity")
-    //             .and_then(|v| v.get("id"))
-    //             .and_then(|v| v.as_str())
-    //             .map(|s| s.to_string()),
-    //         Err(e) => {
-    //             eprintln!("Failed to create entity: {}", e);
-    //             None
-    //         }
-    //     };
+        // Send request to create entity
+        let entity_response = post_request(&url, payload, &runtime);
+        let entity_id = match entity_response {
+            Ok(response) => response.get("entity")
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            Err(e) => {
+                eprintln!("Failed to create entity: {}", e);
+                None
+            }
+        };
         
-    //     // Increment thread counter for embedding
-    //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+        // Increment thread counter for embedding
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
 
-    //     // Increment pending embeddings counter
-    //     PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
+        // Increment pending embeddings counter
+        PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
         
-    //     // Use a guard to ensure counter is decremented when thread exits
-    //     struct EmbedThreadGuard;
-    //     impl Drop for EmbedThreadGuard {
-    //         fn drop(&mut self) {
-    //             ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-    //         }
-    //     }
-    //     let _embed_guard = EmbedThreadGuard;
+        // Use a guard to ensure counter is decremented when thread exits
+        struct EmbedThreadGuard;
+        impl Drop for EmbedThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _embed_guard = EmbedThreadGuard;
         
-    //     // Generate embedding
-    //     let job = EmbeddingJob {chunk: chunk.clone(), entity_id: entity_id.unwrap(), port};
-    //     match tx.try_send(job) {
-    //         Ok(_) => {},
-    //         Err(err) => {
-    //             // Channel is full; send asynchronously so this Rayon thread keeps working
-    //             let job_back = err.into_inner();
-    //             let tx_async = tx.clone();
-    //             let rt = runtime.clone();
-    //             rt.spawn(async move {
-    //                 if let Err(e) = tx_async.send(job_back).await {
-    //                     eprintln!("Failed to send embedding job asynchronously: {}", e);
-    //                     // If we failed to send the job, decrement the pending counter
-    //                     PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
-    //                 }
-    //             });
-    //         }
-    //     }
-    // });
+        // Generate embedding
+        let job = EmbeddingJob {chunk: chunk.clone(), entity_id: entity_id.unwrap(), port};
+        match tx.try_send(job) {
+            Ok(_) => {},
+            Err(err) => {
+                // Channel is full; send asynchronously so this Rayon thread keeps working
+                let job_back = err.into_inner();
+                let tx_async = tx.clone();
+                let rt = runtime.clone();
+                rt.spawn(async move {
+                    if let Err(e) = tx_async.send(job_back).await {
+                        eprintln!("Failed to send embedding job asynchronously: {}", e);
+                        // If we failed to send the job, decrement the pending counter
+                        PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
+                    }
+                });
+            }
+        }
+    });
     Ok(())
 }
 
@@ -410,45 +410,45 @@ pub fn ingest_entities(
                                     TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
                                     
                                     // Process chunks in parallel
-                                    // chunks.par_iter().for_each(|chunk| {
-                                    //     let chunk_clone = chunk.clone();
-                                    //     let entity_id_clone = entity_id.to_string();
+                                    chunks.par_iter().for_each(|chunk| {
+                                        let chunk_clone = chunk.clone();
+                                        let entity_id_clone = entity_id.to_string();
                                         
-                                    //     // Increment thread counter for embedding
-                                    //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                                        // Increment thread counter for embedding
+                                        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
 
-                                    //     // Increment pending embeddings counter
-                                    //     PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
+                                        // Increment pending embeddings counter
+                                        PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
                                         
-                                    //     // Use a guard to ensure counter is decremented when thread exits
-                                    //     struct EmbedThreadGuard;
-                                    //     impl Drop for EmbedThreadGuard {
-                                    //         fn drop(&mut self) {
-                                    //             ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                    //         }
-                                    //     }
-                                    //     let _embed_guard = EmbedThreadGuard;
+                                        // Use a guard to ensure counter is decremented when thread exits
+                                        struct EmbedThreadGuard;
+                                        impl Drop for EmbedThreadGuard {
+                                            fn drop(&mut self) {
+                                                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                                            }
+                                        }
+                                        let _embed_guard = EmbedThreadGuard;
                                         
-                                    //     // Generate embedding
-                                    //     let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
-                                    //     let tx_clone = tx.clone();
-                                    //     match tx_clone.try_send(job) {
-                                    //         Ok(_) => {},
-                                    //         Err(err) => {
-                                    //             // Channel is full; send asynchronously so this Rayon thread keeps working
-                                    //             let job_back = err.into_inner();
-                                    //             let tx_async = tx_clone.clone();
-                                    //             let rt = runtime_clone.clone();
-                                    //             rt.spawn(async move {
-                                    //                 if let Err(e) = tx_async.send(job_back).await {
-                                    //                     eprintln!("Failed to send embedding job asynchronously: {}", e);
-                                    //                     // If we failed to send the job, decrement the pending counter
-                                    //                     PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
-                                    //                 }
-                                    //             });
-                                    //         }
-                                    //     }
-                                    // });
+                                        // Generate embedding
+                                        let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                                        let tx_clone = tx.clone();
+                                        match tx_clone.try_send(job) {
+                                            Ok(_) => {},
+                                            Err(err) => {
+                                                // Channel is full; send asynchronously so this Rayon thread keeps working
+                                                let job_back = err.into_inner();
+                                                let tx_async = tx_clone.clone();
+                                                let rt = runtime_clone.clone();
+                                                rt.spawn(async move {
+                                                    if let Err(e) = tx_async.send(job_back).await {
+                                                        eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                                        // If we failed to send the job, decrement the pending counter
+                                                        PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    });
                                 }
                             }
                         }
@@ -555,38 +555,38 @@ fn process_entity(
                         TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
 
                         // Process chunks in parallel using rayon
-                        // chunks.par_iter().for_each(|chunk| {
-                        //     let chunk_clone = chunk.clone();
-                        //     let entity_id_clone = entity_id.clone();
+                        chunks.par_iter().for_each(|chunk| {
+                            let chunk_clone = chunk.clone();
+                            let entity_id_clone = entity_id.clone();
 
-                        //     // Increment thread counter
-                        //     ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                            // Increment thread counter
+                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
                             
-                        //     // Increment pending embeddings counter
-                        //     PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
+                            // Increment pending embeddings counter
+                            PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
 
-                        //     // Send embedding job to async background worker via mpsc channel
-                        //     let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
-                        //     let tx_clone = tx.clone();
-                        //     match tx_clone.try_send(job) {
-                        //         Ok(_) => {},
-                        //         Err(err) => {
-                        //             let job_back = err.into_inner();
-                        //             let tx_async = tx_clone.clone();
-                        //             let rt = runtime.clone();
-                        //             rt.spawn(async move {
-                        //                 if let Err(e) = tx_async.send(job_back).await {
-                        //                     eprintln!("Failed to send embedding job asynchronously: {}", e);
-                        //                     // If we failed to send the job, decrement the pending counter
-                        //                     PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
-                        //                 }
-                        //             });
-                        //         }
-                        //     }
+                            // Send embedding job to async background worker via mpsc channel
+                            let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                            let tx_clone = tx.clone();
+                            match tx_clone.try_send(job) {
+                                Ok(_) => {},
+                                Err(err) => {
+                                    let job_back = err.into_inner();
+                                    let tx_async = tx_clone.clone();
+                                    let rt = runtime.clone();
+                                    rt.spawn(async move {
+                                        if let Err(e) = tx_async.send(job_back).await {
+                                            eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                            // If we failed to send the job, decrement the pending counter
+                                            PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
+                                        }
+                                    });
+                                }
+                            }
 
-                        //     // Decrement counters
-                        //     ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                        // });
+                            // Decrement counters
+                            ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                        });
                     }
 
                     // Recursively process children of entity in parallel
