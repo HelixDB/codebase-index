@@ -39,7 +39,7 @@ lazy_static! {
         .expect("Failed to create HTTP client");
 
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(3000).unwrap()));
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(1200).unwrap())); // Set below 1500 limit
 
     static ref HELIX_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
         RateLimiter::direct(Quota::per_minute(NonZeroU32::new(10_000).unwrap()));

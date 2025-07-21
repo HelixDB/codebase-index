@@ -20,6 +20,8 @@ use tree_sitter::Node;
 use tree_sitter::Parser;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 
 // Internal utility functions
 use utils::{chunk_entity, embed_entity_async, post_request_async, EmbeddingJob, get_language, post_request, CodeEntity};
@@ -61,25 +63,41 @@ fn main() -> Result<()> {
     let runtime = Arc::new(Runtime::new().unwrap());
 
     // Create the Tokio mpsc channel for embedding jobs
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<EmbeddingJob>(concur_limit);
+    let (tx, rx) = tokio::sync::mpsc::channel::<EmbeddingJob>(concur_limit);
 
-    // Spawn the async background task for embedding jobs
+    // Spawn the async background task for embedding jobs with concurrent processing
     runtime.spawn(async move {
-        while let Some(job) = rx.recv().await {
-            let EmbeddingJob { chunk, entity_id, port } = job;
-            match embed_entity_async(chunk).await {
-                Ok(embedding) => {
-                    let url = format!("http://localhost:{}/{}", port, "embedSuperEntity");
-                    let payload = json!({"entity_id": entity_id,"vector": embedding,});
-                    if let Err(e) = post_request_async(&url, payload).await {
-                        eprintln!("Failed to post embedding: {}", e);
+        // Set concurrent embeddings to better utilize our rate limit
+        let max_concurrent_embeddings = 70;
+        
+        // Create a stream from the channel
+        let mut job_stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+            .map(|job| {
+                async move {
+                    while ACTIVE_THREADS.load(Ordering::SeqCst) > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                     }
+                    let EmbeddingJob { chunk, entity_id, port } = job;
+                    match embed_entity_async(chunk).await {
+                        Ok(embedding) => {
+                            let url = format!("http://localhost:{}/{}", port, "embedSuperEntity");
+                            let payload = json!({"entity_id": entity_id,"vector": embedding,});
+                            if let Err(e) = post_request_async(&url, payload).await {
+                                eprintln!("Failed to post embedding: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to embed chunk: {}", e);
+                        }
+                    }
+                    // Increment completed embeddings counter
+                    COMPLETED_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
                 }
-                Err(e) => {
-                    eprintln!("Failed to embed chunk: {}", e);
-                }
-            }
-        }
+            })
+            .buffer_unordered(max_concurrent_embeddings);
+        
+        // Process the stream
+        while let Some(_) = job_stream.next().await {}
     });
 
     println!("Initialized thread pool with {} threads", concur_limit);
@@ -99,15 +117,47 @@ fn main() -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
+    println!("\nBackground tasks finished in {} seconds", start_time.elapsed().as_secs_f64());
+    
+    // Wait for all embedding jobs to complete
+    println!("Waiting for all embedding jobs to complete...");
+    let bar = ProgressBar::new(PENDING_EMBEDDINGS.load(Ordering::SeqCst).try_into().unwrap());
+    bar.set_style(
+        ProgressStyle::with_template("[{elapsed_precise}] {wide_bar:.white/blue} {pos}/{len} ({per_sec}, ETA: {eta})")
+        .unwrap()
+    );
+    let mut last_completed = 0;
+    while COMPLETED_EMBEDDINGS.load(Ordering::SeqCst) < PENDING_EMBEDDINGS.load(Ordering::SeqCst) {
+        // Poll the counter every 100ms
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        
+        // Print status every 1 second
+        let completed = COMPLETED_EMBEDDINGS.load(Ordering::SeqCst);
+        if completed >= PENDING_EMBEDDINGS.load(Ordering::SeqCst) {
+            break;
+        }
+
+        if completed > last_completed {
+            let diff = completed - last_completed;
+            bar.inc(diff as u64);
+            last_completed = completed;
+        }
+    }
+    bar.finish();
+
     // Get the total number of chunks processed
     let total_chunks = TOTAL_CHUNKS.load(Ordering::SeqCst);
+    let completed_embeddings = COMPLETED_EMBEDDINGS.load(Ordering::SeqCst);
 
     println!("\nIngestion finished in {} seconds", start_time.elapsed().as_secs_f64());
     println!("Root ID: {}", root_id);
     println!("Total chunks processed: {}", total_chunks);
+    println!("Total embeddings completed: {}", completed_embeddings);
 
     TOTAL_CHUNKS.store(0, Ordering::SeqCst);
     ACTIVE_THREADS.store(0, Ordering::SeqCst);
+    PENDING_EMBEDDINGS.store(0, Ordering::SeqCst);
+    COMPLETED_EMBEDDINGS.store(0, Ordering::SeqCst);
 
     loop {
         println!("\nUpdating index...");
@@ -119,10 +169,37 @@ fn main() -> Result<()> {
             // Poll the counter every 10ms
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        
+        // Wait for all embedding jobs to complete
+        println!("Waiting for all embedding jobs to complete...");
+        if PENDING_EMBEDDINGS.load(Ordering::SeqCst) > 0 {
+            let bar = ProgressBar::new(PENDING_EMBEDDINGS.load(Ordering::SeqCst).try_into().unwrap());
+            bar.set_style(
+                ProgressStyle::with_template("[{elapsed_precise}] {wide_bar:.white/blue} {pos}/{len} ({per_sec}, ETA: {eta})")
+                .unwrap()
+            );
+            let mut last_completed = 0;
+            while COMPLETED_EMBEDDINGS.load(Ordering::SeqCst) < PENDING_EMBEDDINGS.load(Ordering::SeqCst) {
+                // Poll the counter every 100ms
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                
+                // Print status every 1 second
+                let completed = COMPLETED_EMBEDDINGS.load(Ordering::SeqCst);
+                if completed > last_completed {
+                    let diff = completed - last_completed;
+                    bar.inc(diff as u64);
+                    last_completed = completed;
+                }
+            }
+            bar.finish();
+        }
         println!("\nTotal chunks processed: {}", TOTAL_CHUNKS.load(Ordering::SeqCst));
+        println!("Total embeddings completed: {}", COMPLETED_EMBEDDINGS.load(Ordering::SeqCst));
 
         TOTAL_CHUNKS.store(0, Ordering::SeqCst);
         ACTIVE_THREADS.store(0, Ordering::SeqCst);
+        PENDING_EMBEDDINGS.store(0, Ordering::SeqCst);
+        COMPLETED_EMBEDDINGS.store(0, Ordering::SeqCst);
 
         std::thread::sleep(std::time::Duration::from_secs(update_interval));
     }
@@ -134,6 +211,10 @@ static ACTIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
 
 // Global counter to track total number of chunks processed
 static TOTAL_CHUNKS: AtomicUsize = AtomicUsize::new(0);
+
+// Global counters to track embedding jobs
+static PENDING_EMBEDDINGS: AtomicUsize = AtomicUsize::new(0);
+static COMPLETED_EMBEDDINGS: AtomicUsize = AtomicUsize::new(0);
 
 pub fn update(
     root_path: PathBuf,
@@ -883,6 +964,9 @@ pub fn process_unsupported_file(
         
         // Increment thread counter for embedding
         ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+
+        // Increment pending embeddings counter
+        PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
         
         // Use a guard to ensure counter is decremented when thread exits
         struct EmbedThreadGuard;
@@ -905,6 +989,8 @@ pub fn process_unsupported_file(
                 rt.spawn(async move {
                     if let Err(e) = tx_async.send(job_back).await {
                         eprintln!("Failed to send embedding job asynchronously: {}", e);
+                        // If we failed to send the job, decrement the pending counter
+                        PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
                     }
                 });
             }
@@ -989,6 +1075,9 @@ pub fn ingest_entities(
                                         
                                         // Increment thread counter for embedding
                                         ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+
+                                        // Increment pending embeddings counter
+                                        PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
                                         
                                         // Use a guard to ensure counter is decremented when thread exits
                                         struct EmbedThreadGuard;
@@ -1012,6 +1101,8 @@ pub fn ingest_entities(
                                                 rt.spawn(async move {
                                                     if let Err(e) = tx_async.send(job_back).await {
                                                         eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                                        // If we failed to send the job, decrement the pending counter
+                                                        PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
                                                     }
                                                 });
                                             }
@@ -1129,6 +1220,9 @@ fn process_entity(
 
                             // Increment thread counter
                             ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+                            
+                            // Increment pending embeddings counter
+                            PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
 
                             // Send embedding job to async background worker via mpsc channel
                             let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
@@ -1142,6 +1236,8 @@ fn process_entity(
                                     rt.spawn(async move {
                                         if let Err(e) = tx_async.send(job_back).await {
                                             eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                            // If we failed to send the job, decrement the pending counter
+                                            PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
                                         }
                                     });
                                 }
