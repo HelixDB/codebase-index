@@ -13,6 +13,23 @@ use std::num::NonZeroU32;
 use governor::state::direct::NotKeyed;
 use governor::state::InMemoryState;
 use governor::clock::DefaultClock;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc
+};
+use std::collections::HashMap;
+use rayon::prelude::*;
+use crate::queries::{get_sub_folders, get_folder_files};
+
+// Global thread counter to track active background threads
+pub static ACTIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+// Global counter to track total number of chunks processed
+pub static TOTAL_CHUNKS: AtomicUsize = AtomicUsize::new(0);
+
+// Global counters to track embedding jobs
+pub static PENDING_EMBEDDINGS: AtomicUsize = AtomicUsize::new(0);
+pub static COMPLETED_EMBEDDINGS: AtomicUsize = AtomicUsize::new(0);
 
 // Job type for embedding work
 #[derive(Debug, Clone)]
@@ -169,4 +186,121 @@ pub struct CodeEntity {
     pub end_byte: usize,
     pub order: usize,
     pub text: String,
+}
+
+// Shared delete functions used by both ingestion and update processes
+
+pub fn delete_folder(
+    folder_id: String,
+    port: u16,
+    runtime: Arc<Runtime>,
+) -> Result<()> {
+    let subfolder_name_ids  = get_sub_folders(folder_id.clone(), &runtime, port)?;
+    // println!("Subfolder IDs: {:#?}", subfolder_name_ids);
+
+    // Find folders that are not in the index
+    let unseen_folders = subfolder_name_ids.keys().collect::<Vec<_>>();
+
+    unseen_folders.par_iter().for_each(|folder_name| {
+        let sub_folder_id = subfolder_name_ids.get(&folder_name.to_string()).unwrap().to_string();
+        let runtime_clone = Arc::clone(&runtime);
+        let _ = delete_folder(sub_folder_id, port, runtime_clone);
+    });
+
+    // Get folder files
+    let folder_file_name_ids = get_folder_files(folder_id.clone(), &runtime, port)?;
+    // println!("Subfolder file IDs: {:#?}", folder_file_name_ids);
+
+    let unseen_files = folder_file_name_ids.keys().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    delete_files(unseen_files.clone(), folder_file_name_ids.clone(), runtime.clone(), port)?;
+
+    let url = format!("http://localhost:{}/{}", port, "deleteFolder");
+    let payload = json!({ "folder_id": folder_id });
+    post_request(&url, payload, &runtime)?;
+    Ok(())
+}
+
+pub fn delete_files(
+    unseen_files: Vec<String>,
+    file_name_ids: HashMap<String, (String, String)>,
+    runtime: Arc<Runtime>,
+    port: u16
+) -> Result<()> {
+    unseen_files.par_iter().for_each(|file_name| {
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+
+        // Use a guard to ensure counter is decremented when thread exits
+        struct ThreadGuard;
+        impl Drop for ThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _guard = ThreadGuard;
+
+        let runtime_inner = Arc::clone(&runtime);
+        let file_id = file_name_ids.get(&file_name.to_string()).unwrap().0.clone();
+
+        let url = format!("http://localhost:{}/{}", port, "deleteFile");
+        let payload = json!({ "file_id": file_id });
+        let _ = post_request(&url, payload, &runtime_inner);
+        
+        let _ = delete_entities(file_id, true, port, runtime_inner);
+    });
+    Ok(())
+}
+
+pub fn delete_entities(
+    parent_id: String,
+    is_super: bool,
+    port: u16,
+    runtime: Arc<Runtime>,
+) -> Result<()> {
+    let url;
+    let body;
+    let res_index;
+    let delete_url;
+    if is_super {
+        url = format!("http://localhost:{}/{}", port, "getFileEntities");
+        body = json!({ "file_id": parent_id });
+        res_index = "entity";
+        delete_url = format!("http://localhost:{}/{}", port, "deleteSuperEntity");
+    } else {
+        url = format!("http://localhost:{}/{}", port, "getSubEntities");
+        body = json!({ "entity_id": parent_id });
+        res_index = "entities";
+        delete_url = format!("http://localhost:{}/{}", port, "deleteSubEntity");
+    }
+
+    let response = post_request(&url, body, &runtime)?;
+    let entities = response
+        .get(res_index)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("Entities not found"))?;
+
+    let entity_ids: Vec<String> = entities
+        .iter()
+        .map(|v| v.get("id").and_then(|v| v.as_str()).unwrap().to_string())
+        .collect();
+
+    entity_ids.par_iter().for_each(|entity_id| {
+        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+
+        struct ThreadGuard;
+        impl Drop for ThreadGuard {
+            fn drop(&mut self) {
+                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _guard = ThreadGuard;
+
+        let runtime_clone = Arc::clone(&runtime);
+
+        let _ = delete_entities(entity_id.to_string(), false, port, runtime_clone);
+
+        let _ = post_request(&delete_url, json!({ "entity_id": entity_id }), &runtime);
+    });
+
+    Ok(())
 }
