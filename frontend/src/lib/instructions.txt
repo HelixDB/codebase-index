@@ -42,7 +42,6 @@ When using `do_query`, the following endpoints are available:
 | getFileRoot | `file_id` (string) | Returns the root node of a specific file | `do_query("getFileRoot", {"file_id": "..."})` |
 | getFolder | `folder_id` (string) | Returns a specific folder | `do_query("getFolder", {"folder_id": "..."})` |
 | getFolderByName | `name` (string) | Returns a specific folder by name | `do_query("getFolderByName", {"name": "..."})` |
-| getAllFolders | None | Returns all folders in the codebase | `do_query("getAllFolders", {})` |
 | getRootFolders | `root_id` (string) | Returns the folders under a root | `do_query("getRootFolders", {"root_id": "..."})` |
 | getSuperFolders | `folder_id` (string) | Returns the parent folders of a folder | `do_query("getSuperFolders", {"folder_id": "..."})` |
 | getSubFolders | `folder_id` (string) | Returns the subfolders of a folder | `do_query("getSubFolders", {"folder_id": "..."})` |
@@ -50,7 +49,6 @@ When using `do_query`, the following endpoints are available:
 | getFile | `file_id` (string) | Returns a specific file | `do_query("getFile", {"file_id": "..."})` |
 | getFileContent | `file_id` (string) | Returns the content of a specific file | `do_query("getFileContent", {"file_id": "..."})` |
 | getRootFiles | `root_id` (string) | Returns the files under a root | `do_query("getRootFiles", {"root_id": "..."})` |
-| getAllFiles | None | Returns all files in the codebase | `do_query("getAllFiles", {})` |
 | getFileByName | `name` (string) | Returns a specific file by name | `do_query("getFileByName", {"name": "..."})` |
 | getFolderFiles | `folder_id` (string) | Returns the files in a folder | `do_query("getFolderFiles", {"folder_id": "..."})` |
 | getFileEntities | `file_id` (string) | Returns the entities in a file | `do_query("getFileEntities", {"file_id": "..."})` |

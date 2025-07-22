@@ -38,7 +38,6 @@ ALLOWED_ENDPOINTS = {
     "getFileRoot",
     "getFolder",
     "getFolderByName",
-    "getAllFolders",
     "getRootFolders",
     "getSuperFolders",
     "getSubFolders",
@@ -46,7 +45,6 @@ ALLOWED_ENDPOINTS = {
     "getFile",
     "getFileContent",
     "getFileByName",
-    "getAllFiles",
     "getRootFiles",
     "getFolderFiles",
     "getFileEntities",
@@ -105,7 +103,6 @@ Perform a query on the codebase.
 | getFileRoot | `file_id` (string) | Returns the root node of a specific file |
 | getFolder | `folder_id` (string) | Returns a specific folder |
 | getFolderByName | `name` (string) | Returns a specific folder by name |
-| getAllFolders | None | Returns all folders in the codebase |
 | getRootFolders | `root_id` (string) | Returns the folders under a root |
 | getSuperFolders | `folder_id` (string) | Returns the parent folders of a folder |
 | getSubFolders | `folder_id` (string) | Returns the subfolders of a folder |
@@ -113,7 +110,6 @@ Perform a query on the codebase.
 | getFile | `file_id` (string) | Returns a specific file |
 | getFileContent | `file_id` (string) | Returns the content of a specific file |
 | getRootFiles | `root_id` (string) | Returns the files under a root |
-| getAllFiles | None | Returns all files in the codebase |
 | getFileByName | `name` (string) | Returns a specific file by name |
 | getFolderFiles | `folder_id` (string) | Returns the files in a folder |
 | getFileEntities | `file_id` (string) | Returns the entities in a file |
