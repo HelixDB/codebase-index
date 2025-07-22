@@ -38,6 +38,11 @@ pub async fn update(
     let index_types: serde_json::Value = serde_json::from_str(&index_types)?;
     let index_types = Arc::new(index_types);
 
+    // Load file types
+    let file_types = fs::read_to_string("file_types.json")?;
+    let file_types: serde_json::Value = serde_json::from_str(&file_types)?;
+    let file_types = Arc::new(file_types);
+
     // Check if root exists
     let url = format!("http://localhost:{}/{}", port, "getRootById");
     let root_res = post_request_async(&url, json!({ "root_id": root_id })).await?;
@@ -80,7 +85,8 @@ pub async fn update(
         let root_file_name_ids_clone = root_file_name_ids.clone();
         let root_id_clone = root_id.clone();
         let tx_clone = tx.clone();
-
+        let file_types_clone = file_types.clone();
+        
         tokio::spawn(async move {
             // Folder
             if path_buf.is_dir(){
@@ -88,10 +94,10 @@ pub async fn update(
                 if root_folder_name_ids_clone.contains_key(folder_name){
                     // println!("Folder {} already exists", folder_name);
                     let folder_id = root_folder_name_ids_clone.get(folder_name).unwrap().to_string();
-                    let _ = Box::pin(update_folder(path_buf.clone(), folder_id.clone(), port, index_types_clone, tx_clone, update_interval)).await;
+                    let _ = Box::pin(update_folder(path_buf.clone(), folder_id.clone(), port, index_types_clone, file_types_clone, tx_clone, update_interval)).await;
                 } else {
                     println!("Folder {} does not exist", folder_name);
-                    let _ = populate(path_buf.clone(), root_id_clone, port, true, index_types_clone, tx_clone).await;
+                    let _ = populate(path_buf.clone(), root_id_clone, port, true, index_types_clone, file_types_clone, tx_clone).await;
                 }
                 Ok(())
 
@@ -115,21 +121,21 @@ pub async fn update(
                             println!("File {} is out of date", file_name);
                             let _ = update_file(
                                 path_buf,file_id,port,
-                                index_types_clone,tx_clone
+                                index_types_clone,file_types_clone,tx_clone
                             ).await;
                         }
                     } else {
                         println!("File {} last modified time not available", file_name);
                         let _ = update_file(
                             path_buf,file_id,port,
-                            index_types_clone,tx_clone
+                            index_types_clone,file_types_clone,tx_clone
                         ).await;
                     }
                 } else {
                     println!("File {} does not exist", file_name);
                     let _ = process_file(
                         path_buf, root_id_clone, true, 
-                        port, index_types_clone, tx_clone
+                        port, index_types_clone, file_types_clone, tx_clone
                     ).await;
                 }
                 Ok(())
@@ -177,6 +183,7 @@ pub async fn update_folder(
     folder_id: String,
     port: u16,
     index_types: Arc<serde_json::Value>,
+    file_types: Arc<serde_json::Value>,
     tx: Sender<EmbeddingJob>,
     update_interval: u64,
 ) -> Result<()> {
@@ -206,6 +213,7 @@ pub async fn update_folder(
         let subfolder_name_ids_clone = subfolder_name_ids.clone();
         let folder_file_name_ids_clone = folder_file_name_ids.clone();
         let folder_id_clone = folder_id.clone();
+        let file_types_clone = file_types.clone();
         let tx_clone = tx.clone();
 
         tokio::spawn(async move {
@@ -215,10 +223,10 @@ pub async fn update_folder(
                 if subfolder_name_ids_clone.contains_key(folder_name){
                     // println!("Folder {} already exists", folder_name);
                     let sub_folder_id = subfolder_name_ids_clone.get(folder_name).unwrap().to_string();
-                    let _ = Box::pin(update_folder(path_buf.clone(), sub_folder_id, port, index_types_clone, tx_clone, update_interval)).await;
+                    let _ = Box::pin(update_folder(path_buf.clone(), sub_folder_id, port, index_types_clone, file_types_clone, tx_clone, update_interval)).await;
                 } else {
                     println!("Folder {} does not exist", folder_name);
-                    let _ = populate(path_buf.clone(), folder_id_clone, port, false, index_types_clone, tx_clone).await;
+                    let _ = populate(path_buf.clone(), folder_id_clone, port, false, index_types_clone, file_types_clone, tx_clone).await;
                 }
                 Ok(())
 
@@ -241,21 +249,21 @@ pub async fn update_folder(
                             println!("File {} is out of date", file_name);
                             let _ = update_file(
                                 path_buf, file_id, port,
-                                index_types_clone, tx_clone,
+                                index_types_clone, file_types_clone, tx_clone,
                             ).await;
                         }
                     } else {
                         println!("File {} last modified time not available", file_name);
                         let _ = update_file(
                             path_buf, file_id, port,
-                            index_types_clone, tx_clone,
+                            index_types_clone, file_types_clone, tx_clone,
                         ).await;
                     }
                 } else {
                     println!("File {} does not exist", file_name);
                     let _ = process_file(
                         path_buf, folder_id_clone, false, port,
-                        index_types_clone, tx_clone
+                        index_types_clone, file_types_clone, tx_clone
                     ).await;
                 }
                 Ok(())
@@ -302,6 +310,7 @@ pub async fn update_file(
     file_id: String,
     port: u16,
     index_types: Arc<serde_json::Value>,
+    file_types: Arc<serde_json::Value>,
     tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
     let source_code = match fs::read_to_string(&file_path) {
@@ -316,7 +325,10 @@ pub async fn update_file(
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("txt");
-    
+
+    let supported = file_types.get("supported").unwrap().as_array().unwrap();
+    let unsupported = file_types.get("unsupported").unwrap().as_array().unwrap();
+
     if let Some(language) = get_language(&file_path) {
         // Parse file
         let mut parser = Parser::new();
@@ -331,6 +343,11 @@ pub async fn update_file(
         // Send request to update file
         println!("\nUpdating file: {}", file_name);
         let _ = post_request_async(&url, payload).await;
+
+        if !supported.iter().any(|v| v.as_str().map_or(false, |s| s == extension || s == "ALL")){
+            println!("File {} is skipped", file_name);
+            return Ok(());
+        }
 
         let _ = delete_entities(file_id.to_string(), true, port).await;
 
@@ -348,6 +365,11 @@ pub async fn update_file(
         // Send request to update file
         println!("\nUpdating unsupported file: {}", file_name);
         post_request_async(&url, payload).await?;
+
+        if !unsupported.iter().any(|v| v.as_str().map_or(false, |s| s == extension || s == "ALL")){
+            println!("File {} is skipped", file_name);
+            return Ok(());
+        }
 
         let _ = delete_entities(file_id.to_string(), true, port).await;
 

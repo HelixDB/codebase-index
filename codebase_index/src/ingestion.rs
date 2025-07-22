@@ -53,10 +53,14 @@ pub async fn ingestion(
     let index_types: serde_json::Value = serde_json::from_str(&index_types)?;
     let index_types = Arc::new(index_types);
 
+    let file_types = fs::read_to_string("file_types.json")?;
+    let file_types: serde_json::Value = serde_json::from_str(&file_types)?;
+    let file_types = Arc::new(file_types);
+
     // Start populating the index with directory contents
     populate(
         root_path,root_id.to_string(),port,
-        true,index_types,tx
+        true,index_types,file_types,tx
     ).await?;
 
     Ok(root_id.to_string())
@@ -70,6 +74,7 @@ pub async fn populate(
     port: u16,
     is_super: bool,
     index_types: Arc<serde_json::Value>,
+    file_types: Arc<serde_json::Value>,
     tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
     // Initialize walker builder
@@ -92,6 +97,7 @@ pub async fn populate(
         let path_buf = entry.path().to_path_buf();
         let parent_id_clone = parent_id.clone();
         let index_types_clone = index_types.clone();
+        let file_types_clone = file_types.clone();
         let tx_clone = tx.clone();
 
         tokio::spawn(async move {
@@ -119,7 +125,7 @@ pub async fn populate(
                             let path_buf_clone = path_buf.clone();
                             if let Err(e) = Box::pin(populate(
                                 path_buf_clone,folder_id,port,
-                                false,index_types_clone, tx_clone
+                                false,index_types_clone, file_types_clone, tx_clone
                             )).await {
                                 eprintln!("Error populating folder {}: {}",folder_name, e);
                             }
@@ -137,7 +143,7 @@ pub async fn populate(
             } else if path_buf.is_file() {
                 process_file(
                     path_buf,parent_id_clone,is_super,
-                    port, index_types_clone,tx_clone
+                    port, index_types_clone,file_types_clone,tx_clone
                 ).await
             } else {
                 Ok(())
@@ -159,6 +165,7 @@ pub async fn process_file(
     is_super: bool,
     port: u16,
     index_types: Arc<serde_json::Value>,
+    file_types: Arc<serde_json::Value>,
     tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
     // Read file contents
@@ -175,6 +182,9 @@ pub async fn process_file(
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("txt");
+
+    let supported = file_types.get("supported").unwrap().as_array().unwrap();
+    let unsupported = file_types.get("unsupported").unwrap().as_array().unwrap();
 
     // Parse file with Tree Sitter
     if let Some(language) = get_language(&file_path) {
@@ -203,6 +213,11 @@ pub async fn process_file(
             }
         };
 
+        if !supported.iter().any(|v| v.as_str().map_or(false, |s| s == extension || s == "ALL")){
+            println!("File {} is skipped", file_name);
+            return Ok(());
+        }
+
         let file_id = file_response
             .get("file")
             .and_then(|v| v.get("id"))
@@ -230,6 +245,11 @@ pub async fn process_file(
         println!("\nProcessing unsupported file: {}", file_name);
         let response = post_request_async(&url, payload).await?;
 
+        if !unsupported.iter().any(|v| v.as_str().map_or(false, |s| s == extension || s == "ALL")){
+            println!("File {} is skipped", file_name);
+            return Ok(());
+        }
+
         let file_id = response.get("file").and_then(|v| v.get("id")).and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
 
         let chunks = chunk_entity(&source_code).unwrap();
@@ -248,8 +268,6 @@ pub async fn process_unsupported_file(
     order_counter: Arc<AtomicUsize>,
     tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
-    // TOTAL_CHUNKS already incremented outside
-
     let tasks: Vec<JoinHandle<()>> = chunks.into_iter().map(|chunk| {
         let file_id_clone = file_id.clone();
         let order_counter_clone = order_counter.clone();

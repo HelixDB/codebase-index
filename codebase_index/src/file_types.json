@@ -1,0 +1,19 @@
+{
+    "supported":[
+        "ALL"
+    ],
+    "unsupported":[
+        "cmake",
+        "txt",
+        "md",
+        "toml",
+        "sh",
+        "json",
+        "hx",
+        "yml",
+        "yaml",
+        "html",
+        "css",
+        "map"
+    ]
+}

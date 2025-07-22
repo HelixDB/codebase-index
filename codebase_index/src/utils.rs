@@ -157,9 +157,9 @@ pub fn get_language(file_path: &Path) -> Option<tree_sitter::Language> {
         Some("zig") => Some(tree_sitter_zig::LANGUAGE.into()),
         Some("cpp") | Some("cc") | Some("cxx") => Some(tree_sitter_cpp::LANGUAGE.into()),
         Some("c") | Some("h") => Some(tree_sitter_c::LANGUAGE.into()),
-        Some("ts") => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        Some("ts") | Some("mts") | Some("cts")=> Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Some("tsx") => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-        Some("js") | Some("jsx") => Some(tree_sitter_javascript::LANGUAGE.into()),
+        Some("js") | Some("jsx") | Some("mjs") | Some("mjsx") | Some("cjs") | Some("cjsx") => Some(tree_sitter_javascript::LANGUAGE.into()),
         _ => None,
     }
 }
