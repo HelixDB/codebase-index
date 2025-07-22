@@ -44,13 +44,13 @@ lazy_static! {
 
     static ref helix_client: reqwest::Client = reqwest::Client::builder()
         .timeout(Duration::from_secs(90))
-        .pool_max_idle_per_host(1000)
+        .pool_max_idle_per_host(500)
         .pool_idle_timeout(Duration::from_secs(90))
         .build()
         .expect("Failed to create HTTP client");
 
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(2000).unwrap()));
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(4000).unwrap()));
 
     static ref HELIX_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
         RateLimiter::direct(Quota::per_second(NonZeroU32::new(100).unwrap()));

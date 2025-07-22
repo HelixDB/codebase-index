@@ -11,8 +11,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 use std::io;
 use std::io::Write;
-use tokio::runtime::Runtime;
-use num_cpus;
 use dotenv;
 use tokio_stream;
 use futures::StreamExt;
@@ -33,22 +31,21 @@ use ingestion::ingestion;
 // Remove embedding_wait_thread function entirely
 
 async fn async_main() {
+    clear_screen();
     let args: Vec<String> = env::args().collect();
 
     let default_port = 6969;
-    let max_concur = num_cpus::get().saturating_mul(2);
-
+    
     // Get arguments
     let path: String = if args.len() > 1 { args[1].clone() } else { "sample".to_string() };
     let port: u16 = if args.len() > 2 { args[2].parse::<u16>().unwrap() } else { default_port };
-    let concur_limit: usize = if args.len() > 3 { args[3].parse::<usize>().unwrap_or(max_concur) } else { max_concur };
+    let channel_buffer_size = 1000;
 
     println!("\nConnecting to Helix instance at port {}", port);
 
     dotenv::dotenv().ok();
     
-    // Create the Tokio mpsc channel for embedding jobs
-    let (tx, rx) = tokio::sync::mpsc::channel::<EmbeddingJob>(concur_limit);
+    let (tx, rx) = tokio::sync::mpsc::channel::<EmbeddingJob>(channel_buffer_size);
 
     // Spawn the async background task for embedding jobs
     tokio::spawn(async move {
@@ -83,8 +80,6 @@ async fn async_main() {
         // Process the stream
         while let Some(_) = job_stream.next().await {}
     });
-
-    println!("Initialized with concurrency limit {}", concur_limit);
 
     let mut root_id = String::new();
 
@@ -146,7 +141,9 @@ async fn parse_user_input(root_id: String, path: String, port: u16, tx: tokio::s
         return Ok("EXIT".to_string());
     }
 
-    return Err(anyhow::anyhow!("Invalid input"));
+    clear_screen();
+    println!("Invalid input");
+    return Ok(root_id);
 }
 
 async fn wait_for_embeddings(start_time: Instant) {
@@ -194,6 +191,10 @@ async fn get_root_ids(port: u16) -> Result<Vec<String>> {
 }
 
 fn main() {
-    let rt = Runtime::new().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    
     rt.block_on(async_main());
 }

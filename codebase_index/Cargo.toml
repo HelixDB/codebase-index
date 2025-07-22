@@ -28,10 +28,10 @@ futures = "0.3"
 tokio-stream = "0.1"
 lazy_static = "1.5.0"
 governor = { version = "0.6"}
-num_cpus = "1.17.0"
 indicatif = "0.18.0"
 clearscreen = "4.0.2"
 async-recursion = "1.1.1"
+sys-info = "0.9.1"
 
 [build-dependencies]
 cc = "1.0"

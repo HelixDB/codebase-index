@@ -168,6 +168,12 @@ def semantic_search_code(query: str, k: int = 5) -> List[Any]:
     print(f'Called `semantic_search_code` with query: {query} and k: {k}')
     return db.query("searchSuperEntity", {"vector": query_vector, "k": k})
 
+@mcp.tool
+def get_instructions():
+    with open('instructions.txt', 'r') as f:
+        instructions = f.read()
+        return instructions
+
 @mcp.resource("meta://about")
 def about():
     return {
