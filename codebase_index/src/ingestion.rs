@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ignore::WalkBuilder;
-use rayon::prelude::*;
+use futures::future::join_all;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -8,26 +8,38 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc
 };
-use tokio::runtime::Runtime;
+use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
+use crate::utils::CodeEntity;
 use tree_sitter::{Node, Parser};
+#[derive(Clone)]
+pub struct OwnedNode {
+    kind: String,
+    start_byte: usize,
+    end_byte: usize,
+    text: String,
+    children: Vec<OwnedNode>,
+}
 
 // Import from our modules
 use crate::utils::{
-    post_request, chunk_entity, get_language, EmbeddingJob, CodeEntity, ACTIVE_THREADS, TOTAL_CHUNKS, PENDING_EMBEDDINGS
+    post_request_async, chunk_entity, get_language, EmbeddingJob, TOTAL_CHUNKS
 };
 
-pub fn ingestion(
+// Add use async_recursion::async_recursion;
+use async_recursion::async_recursion;
+
+pub async fn ingestion(
     root_path: PathBuf,
     port: u16,
-    runtime: Arc<Runtime>,
-    tx: tokio::sync::mpsc::Sender<EmbeddingJob>,
+    tx: Sender<EmbeddingJob>,
 ) -> Result<String> {
     println!("Starting ingestion for directory: {}", root_path.display());
 
     // Create a root entry in the index
     let root_name = root_path.file_name().unwrap().to_str().unwrap();
     let url = format!("http://localhost:{}/{}", port, "createRoot");
-    let root_response = post_request(&url, json!({ "name": root_name }), &runtime)?;
+    let root_response = post_request_async(&url, json!({ "name": root_name })).await?;
     let root_id = root_response
         .get("root")
         .and_then(|v| v.get("id"))
@@ -44,21 +56,21 @@ pub fn ingestion(
     // Start populating the index with directory contents
     populate(
         root_path,root_id.to_string(),port,
-        true,index_types,Arc::clone(&runtime),tx
-    )?;
+        true,index_types,tx
+    ).await?;
 
     Ok(root_id.to_string())
 }
 
 /// Recursively populates the index with directory contents
-pub fn populate(
+#[async_recursion]
+pub async fn populate(
     current_path: PathBuf,
     parent_id: String,
     port: u16,
     is_super: bool,
     index_types: Arc<serde_json::Value>,
-    runtime: Arc<Runtime>,
-    tx: tokio::sync::mpsc::Sender<EmbeddingJob>,
+    tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
     // Initialize walker builder
     let mut walker_builder = WalkBuilder::new(&current_path);
@@ -75,107 +87,79 @@ pub fn populate(
         .filter(|entry| entry.path() != current_path)
         .collect();
 
-    // Process entries in parallel using the thread pool
-    entries.par_iter().for_each(|entry| {
-        let path = entry.path();
-        let path_buf = path.to_path_buf();
+    // Process entries concurrently
+    let tasks: Vec<JoinHandle<Result<()>>> = entries.into_iter().map(|entry| {
+        let path_buf = entry.path().to_path_buf();
         let parent_id_clone = parent_id.clone();
-        let index_types_clone = Arc::clone(&index_types);
-        let runtime_clone = Arc::clone(&runtime);
+        let index_types_clone = index_types.clone();
         let tx_clone = tx.clone();
 
-        if path_buf.is_dir() {
-            // Get folder information
-            let folder_name = path_buf.file_name().unwrap().to_str().unwrap();
-            let endpoint = if is_super {"createSuperFolder"} else {"createSubFolder"};
-            let url = format!("http://localhost:{}/{}", port, endpoint);
-            let payload = if is_super {
-                json!({ "name": folder_name, "root_id": parent_id_clone })
-            } else {
-                json!({ "name": folder_name, "folder_id": parent_id_clone })
-            };
+        tokio::spawn(async move {
+            if path_buf.is_dir() {
+                // Get folder information
+                let folder_name = path_buf.file_name().unwrap().to_str().unwrap();
+                let endpoint = if is_super {"createSuperFolder"} else {"createSubFolder"};
+                let url = format!("http://localhost:{}/{}", port, endpoint);
+                let payload = if is_super {
+                    json!({ "name": folder_name, "root_id": parent_id_clone })
+                } else {
+                    json!({ "name": folder_name, "folder_id": parent_id_clone })
+                };
 
-            // Send request to create folder and get its ID
-            println!("\nSubmitting {} folder for processing", folder_name);
-            match post_request(&url, payload, &runtime_clone) {
-                Ok(res) => {
-                    if let Some(folder_id) = res
-                        .get(if is_super { "folder" } else { "subfolder" })
-                        .and_then(|v| v.get("id"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                    {
-                        // Increment thread counter
-                        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                        
-                        // Use rayon's spawn to process the folder in the thread pool
-                        let path_buf_clone = path_buf.clone();
-                        let folder_name_clone = folder_name.to_string();
-                        
-                        // Use a guard to ensure counter is decremented when thread exits
-                        struct ThreadGuard;
-                        impl Drop for ThreadGuard {
-                            fn drop(&mut self) {
-                                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
+                // Send request to create folder and get its ID
+                println!("\nSubmitting {} folder for processing", folder_name);
+                match post_request_async(&url, payload).await {
+                    Ok(res) => {
+                        if let Some(folder_id) = res
+                            .get(if is_super { "folder" } else { "subfolder" })
+                            .and_then(|v| v.get("id"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                        {
+                            let path_buf_clone = path_buf.clone();
+                            if let Err(e) = Box::pin(populate(
+                                path_buf_clone,folder_id,port,
+                                false,index_types_clone, tx_clone
+                            )).await {
+                                eprintln!("Error populating folder {}: {}",folder_name, e);
                             }
+                            Ok(())
+                        } else {
+                            eprintln!("Failed to extract folder ID from response for: {}", folder_name);
+                            Ok(())
                         }
-                        let _guard = ThreadGuard;
-
-                        if let Err(e) = populate(
-                            path_buf_clone,folder_id,port,
-                            false,index_types_clone,runtime_clone, tx_clone
-                        ) {
-                            eprintln!("Error populating folder {}: {}",folder_name_clone, e);
-                        }
-                    } else {
-                        eprintln!("Failed to extract folder ID from response for: {}", folder_name);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to create folder {}: {}", folder_name, e);
+                        Ok(())
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to create folder {}: {}", folder_name, e);
-                }
+            } else if path_buf.is_file() {
+                process_file(
+                    path_buf,parent_id_clone,is_super,
+                    port, index_types_clone,tx_clone
+                ).await
+            } else {
+                Ok(())
             }
-        // Path is a file
-        } else if path_buf.is_file() {
-            // Increment thread counter
-            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-            
-            // Process the file using the thread pool
-            let path_buf_clone = path_buf.clone();
-            let parent_id_clone2 = parent_id_clone.clone();
-            let index_types_inner = Arc::clone(&index_types_clone);
-            let runtime_inner = Arc::clone(&runtime_clone);
-            let tx_clone = tx.clone();
-            
-            // Use a guard to ensure counter is decremented when thread exits
-            struct ThreadGuard;
-            impl Drop for ThreadGuard {
-                fn drop(&mut self) {
-                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _guard = ThreadGuard;
+        })
+    }).collect();
 
-            process_file(
-                path_buf_clone,parent_id_clone2,is_super,
-                port, index_types_inner,runtime_inner,tx_clone.clone()
-            )
-            .ok();
-        }
-    });
+    for task in tasks {
+        task.await??;
+    }
 
     Ok(())
 }
 
 /// Processes a single file and extracts entities
-pub fn process_file(
+pub async fn process_file(
     file_path: PathBuf,
     parent_id: String,
     is_super: bool,
     port: u16,
     index_types: Arc<serde_json::Value>,
-    runtime: Arc<Runtime>,
-    tx: tokio::sync::mpsc::Sender<EmbeddingJob>,
+    tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
     // Read file contents
     let source_code = match fs::read_to_string(&file_path) {
@@ -211,7 +195,7 @@ pub fn process_file(
 
         // Send request to create file
         println!("\nProcessing {} file: {}", file_type, file_name);
-        let file_response = match post_request(&url, payload, &runtime) {
+        let file_response = match post_request_async(&url, payload).await {
             Ok(response) => response,
             Err(e) => {
                 eprintln!("Failed to create file {}: {}", file_name, e);
@@ -230,19 +214,8 @@ pub fn process_file(
 
         // Process entities
         let root_node = tree.root_node();
-        let mut binding = root_node.walk();
-        
-        // Collect children into a Vec to enable parallel iteration
-        let children: Vec<Node> = root_node.children(&mut binding).collect();
-        // println!("Processing {} super entities from file {}", children.len(), file_name);
-        
-        // Use a shared counter for order to ensure consistent ordering
-        let order_counter = Arc::new(AtomicUsize::new(1));
-        
-        // Process entities in parallel
-        ingest_entities(&children, &source_code, file_id.to_string(), port,
-            extension.to_string(), index_types, &runtime, &tx, &order_counter)?;
-    // File is not supported by Tree Sitter
+        let owned_nodes = build_owned_nodes(root_node, &source_code);
+        ingest_entities(owned_nodes, file_id.to_string(), port, extension.to_string(), index_types, tx).await?;
     } else {
         // Create file without entities
         let endpoint = if is_super {"createSuperFile"} else {"createFile"};
@@ -255,262 +228,187 @@ pub fn process_file(
 
         // Send request to create file
         println!("\nProcessing unsupported file: {}", file_name);
-        let response = post_request(&url, payload, &runtime)?;
+        let response = post_request_async(&url, payload).await?;
 
-        let file_id = response.get("file_id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
+        let file_id = response.get("file").and_then(|v| v.get("id")).and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("File ID not found"))?;
 
         let chunks = chunk_entity(&source_code).unwrap();
         let order_counter = Arc::new(AtomicUsize::new(1));
         TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
 
-        process_unsupported_file(chunks, file_id.to_string(), port, order_counter, tx, runtime)?;
+        process_unsupported_file(chunks, file_id.to_string(), port, order_counter, tx).await?;
     }
     Ok(())
 }
 
-pub fn process_unsupported_file(
+pub async fn process_unsupported_file(
     chunks: Vec<String>,
     file_id: String,
     port: u16,
     order_counter: Arc<AtomicUsize>,
-    tx: tokio::sync::mpsc::Sender<EmbeddingJob>,
-    runtime: Arc<Runtime>,
+    tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
-    // Increment the total chunks counter
-    TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
+    // TOTAL_CHUNKS already incremented outside
 
-    chunks.par_iter().for_each(|chunk| {
-        let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
-        let payload = json!({
-                "file_id": file_id,
-                "entity_type": "chunk",
-                "text": chunk,
-                "start_byte": 0,
-                "end_byte": chunk.len() as i64,
-                "order": order_counter.fetch_add(1, Ordering::SeqCst),
-            });
+    let tasks: Vec<JoinHandle<()>> = chunks.into_iter().map(|chunk| {
+        let file_id_clone = file_id.clone();
+        let order_counter_clone = order_counter.clone();
+        let tx_clone = tx.clone();
 
-        // Send request to create entity
-        let entity_response = post_request(&url, payload, &runtime);
-        let entity_id = match entity_response {
-            Ok(response) => response.get("entity")
-                .and_then(|v| v.get("id"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            Err(e) => {
-                eprintln!("Failed to create entity: {}", e);
-                None
-            }
-        };
-        
-        // Increment thread counter for embedding
-        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-
-        // Increment pending embeddings counter
-        PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
-        
-        // Use a guard to ensure counter is decremented when thread exits
-        struct EmbedThreadGuard;
-        impl Drop for EmbedThreadGuard {
-            fn drop(&mut self) {
-                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-        let _embed_guard = EmbedThreadGuard;
-        
-        // Generate embedding
-        let job = EmbeddingJob {chunk: chunk.clone(), entity_id: entity_id.unwrap(), port};
-        match tx.try_send(job) {
-            Ok(_) => {},
-            Err(err) => {
-                // Channel is full; send asynchronously so this Rayon thread keeps working
-                let job_back = err.into_inner();
-                let tx_async = tx.clone();
-                let rt = runtime.clone();
-                rt.spawn(async move {
-                    if let Err(e) = tx_async.send(job_back).await {
-                        eprintln!("Failed to send embedding job asynchronously: {}", e);
-                        // If we failed to send the job, decrement the pending counter
-                        PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
-                    }
+        tokio::spawn(async move {
+            let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
+            let payload = json!({
+                    "file_id": file_id_clone,
+                    "entity_type": "chunk",
+                    "text": chunk,
+                    "start_byte": 0,
+                    "end_byte": chunk.len() as i64,
+                    "order": order_counter_clone.fetch_add(1, Ordering::SeqCst),
                 });
+
+            // Send request to create entity
+            let entity_response = post_request_async(&url, payload).await;
+            let entity_id = match entity_response {
+                Ok(response) => response.get("entity")
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                Err(e) => {
+                    eprintln!("Failed to create entity: {}", e);
+                    None
+                }
+            };
+            
+            // Generate embedding
+            if let Some(entity_id) = entity_id {
+                let job = EmbeddingJob {chunk: chunk.clone(), entity_id, port};
+                match tx_clone.try_send(job) {
+                    Ok(_) => {},
+                    Err(err) => {
+                        // Channel is full; send asynchronously
+                        let job_back = err.into_inner();
+                        let tx_async = tx_clone.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = tx_async.send(job_back).await {
+                                eprintln!("Failed to send embedding job asynchronously: {}", e);
+                            }
+                        });
+                    }
+                }
             }
-        }
-    });
+        })
+    }).collect();
+
+    join_all(tasks).await;
+
     Ok(())
 }
 
-pub fn ingest_entities(
-    children: &[Node],
-    source_code: &str,
+pub async fn ingest_entities(
+    owned_nodes: Vec<OwnedNode>,
     file_id: String,
     port: u16,
     extension: String,
     index_types: Arc<serde_json::Value>,
-    runtime: &Arc<Runtime>,
-    tx: &tokio::sync::mpsc::Sender<EmbeddingJob>,
-    order_counter: &Arc<AtomicUsize>,
-)
--> Result<()> {
-    children.par_iter().for_each(|entity| {
-        // Increment thread counter
-        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-        
-        // Use a guard to ensure counter is decremented when thread exits
-        struct ThreadGuard;
-        impl Drop for ThreadGuard {
-            fn drop(&mut self) {
-                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-        let _guard = ThreadGuard;
-        
-        // Get the current order value and increment it atomically
-        let current_order = order_counter.fetch_add(1, Ordering::SeqCst);
-        
-        // Clone necessary variables for the closure
-        let source_code_clone = source_code.to_string();
-        let file_id_clone = file_id.to_string();
-        let extension_clone = extension.to_string();
+    tx: Sender<EmbeddingJob>,
+) -> Result<()> {
+    let order_counter = Arc::new(AtomicUsize::new(1));
+    let tasks: Vec<JoinHandle<Result<()>>> = owned_nodes.into_iter().map(|owned| {
+        let file_id_clone = file_id.clone();
+        let extension_clone = extension.clone();
         let index_types_clone = index_types.clone();
-        let runtime_clone = runtime.clone();
-        
-        // Get index_types for file extension
-        if let Some(types) = index_types.get(&extension) {
-            if let Some(types_array) = types.as_array() {
-                // Check if ALL is not in index_types
-                if types_array.iter().any(|v| v.as_str().map_or(false, |s| s != "ALL")) {
-                    // Super entity type in index_types
-                    if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == entity.kind().to_string())){
-                        // Has super content (need to create super entity and embed before processing current super entity)
-                        let entity_start_byte = entity.start_byte();
-                        let entity_end_byte = entity.end_byte();
-                        let entity_content = &source_code_clone[entity_start_byte..entity_end_byte].to_string();
-                        
-                        let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
-                        let payload = json!({
-                            "file_id": file_id_clone.clone(),
-                            "entity_type": entity.kind().to_string(),
-                            "text": entity_content,
-                            "start_byte": entity_start_byte,
-                            "end_byte": entity_end_byte,
-                            "order": current_order,
-                        });
-                        
-                        // Send request to create entity
-                        if let Ok(entity_response) = post_request(&url, payload, &runtime_clone) {
-                            if let Some(entity_id) = entity_response
-                                .get("entity")
-                                .and_then(|v| v.get("id"))
-                                .and_then(|v| v.as_str())
-                            {
-                                // Chunk entity text
-                                if let Ok(chunks) = chunk_entity(&entity_content) {
-                                    // Increment the total chunks counter
-                                    TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
-                                    
-                                    // Process chunks in parallel
-                                    chunks.par_iter().for_each(|chunk| {
-                                        let chunk_clone = chunk.clone();
-                                        let entity_id_clone = entity_id.to_string();
-                                        
-                                        // Increment thread counter for embedding
-                                        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-
-                                        // Increment pending embeddings counter
-                                        PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
-                                        
-                                        // Use a guard to ensure counter is decremented when thread exits
-                                        struct EmbedThreadGuard;
-                                        impl Drop for EmbedThreadGuard {
-                                            fn drop(&mut self) {
-                                                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                            }
-                                        }
-                                        let _embed_guard = EmbedThreadGuard;
-                                        
-                                        // Generate embedding
-                                        let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
-                                        let tx_clone = tx.clone();
-                                        match tx_clone.try_send(job) {
-                                            Ok(_) => {},
-                                            Err(err) => {
-                                                // Channel is full; send asynchronously so this Rayon thread keeps working
-                                                let job_back = err.into_inner();
-                                                let tx_async = tx_clone.clone();
-                                                let rt = runtime_clone.clone();
-                                                rt.spawn(async move {
-                                                    if let Err(e) = tx_async.send(job_back).await {
-                                                        eprintln!("Failed to send embedding job asynchronously: {}", e);
-                                                        // If we failed to send the job, decrement the pending counter
-                                                        PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
+        let tx_clone = tx.clone();
+        let order_counter_clone = order_counter.clone();
+        tokio::spawn(async move {
+            let current_order = order_counter_clone.fetch_add(1, Ordering::SeqCst);
+            // Get index_types for file extension
+            if let Some(types) = index_types_clone.get(&extension_clone) {
+                if let Some(types_array) = types.as_array() {
+                    // Check if ALL is not in index_types
+                    if types_array.iter().any(|v| v.as_str().map_or(false, |s| s != "ALL")) {
+                        // Super entity type in index_types
+                        if types_array.iter().any(|v| v.as_str().map_or(false, |s| s == owned.kind)){
+                            // Has super content
+                            let entity_start_byte = owned.start_byte;
+                            let entity_end_byte = owned.end_byte;
+                            let entity_content = &owned.text;
+                            let url = format!("http://localhost:{}/{}", port, "createSuperEntity");
+                            let payload = json!({
+                                "file_id": file_id_clone.clone(),
+                                "entity_type": owned.kind,
+                                "text": entity_content,
+                                "start_byte": entity_start_byte,
+                                "end_byte": entity_end_byte,
+                                "order": current_order,
+                            });
+                            // Send request
+                            if let Ok(entity_response) = post_request_async(&url, payload).await {
+                                if let Some(entity_id) = entity_response.get("entity").and_then(|v| v.get("id")).and_then(|v| v.as_str()) {
+                                    if let Ok(chunks) = chunk_entity(entity_content) {
+                                        TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
+                                        let chunk_tasks: Vec<JoinHandle<()>> = chunks.into_iter().map(|chunk| {
+                                            let chunk_clone = chunk.clone();
+                                            let entity_id_clone = entity_id.to_string();
+                                            let tx_clone_inner = tx_clone.clone();
+                                            tokio::spawn(async move {
+                                                let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                                                match tx_clone_inner.try_send(job) {
+                                                    Ok(_) => {},
+                                                    Err(err) => {
+                                                        let job_back = err.into_inner();
+                                                        let tx_async = tx_clone_inner.clone();
+                                                        tokio::spawn(async move {
+                                                            if let Err(e) = tx_async.send(job_back).await {
+                                                                eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                                            }
+                                                        });
                                                     }
-                                                });
-                                            }
-                                        }
-                                    });
+                                                }
+                                            })
+                                        }).collect();
+                                        join_all(chunk_tasks).await;
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-        
-        // Process entity and its children
-        if let Err(e) = process_entity(
-            *entity,&source_code_clone,file_id_clone,
-            port,true,current_order,extension_clone,
-            index_types_clone,runtime_clone,tx.clone()
-        ) {
-            eprintln!("Error processing entity: {}", e);
-        }
-    });
+            process_entity(owned, file_id_clone, port, true, current_order, extension_clone, index_types_clone, tx_clone).await
+        })
+    }).collect();
+    for task in tasks {
+        task.await??;
+    }
     Ok(())
 }
 
 /// Processes an entity and its children recursively
-fn process_entity(
-    entity: Node,
-    source_code: &str,
+#[async_recursion]
+async fn process_entity(
+    owned: OwnedNode,
     parent_id: String,
     port: u16,
     is_super: bool,
     order: usize,
     extension: String,
     index_types: Arc<serde_json::Value>,
-    runtime: Arc<Runtime>,
-    tx: tokio::sync::mpsc::Sender<EmbeddingJob>,
+    tx: Sender<EmbeddingJob>,
 ) -> Result<()> {
-    // Create entity
     let code_entity = CodeEntity {
-        entity_type: entity.kind().to_string(),
-        start_byte: entity.start_byte(),
-        end_byte: entity.end_byte(),
+        entity_type: owned.kind.clone(),
+        start_byte: owned.start_byte,
+        end_byte: owned.end_byte,
         order,
-        text: source_code[entity.start_byte()..entity.end_byte()].to_string(),
+        text: owned.text.clone(),
     };
-    let mut binding = entity.walk();
-    let children = entity.children(&mut binding);
-    let len = children.len();
-
-    // Special case for Python
-    if extension == "py" && code_entity.entity_type == "block" && len > 0 {
-        // Recursively process children of entity
-        if len > 0 {
-            let mut order = 1;
-            for child in children.into_iter() {
-                process_entity(
-                    child,&source_code,parent_id.to_string(),
-                    port,false,order,extension.clone(),
-                    Arc::clone(&index_types),Arc::clone(&runtime),tx.clone(),
-                )?;
-                order += 1;
-            }
+    if extension == "py" && code_entity.entity_type == "block" && !owned.children.is_empty() {
+        let mut order = 1;
+        for child in owned.children.into_iter() {
+            process_entity(child, parent_id.clone(), port, false, order, extension.clone(), index_types.clone(), tx.clone()).await?;
+            order += 1;
         }
-    }
-    // General case
-    else {
+    } else {
         // Handle special extension cases
         let mut index_type = extension.clone();
         if extension == "cc" || extension == "cxx" {
@@ -520,7 +418,6 @@ fn process_entity(
         } else if extension == "js" || extension == "jsx" {
             index_type = "js".to_string();
         }
-
         if let Some(types) = index_types.get(&index_type) {
             if let Some(types_array) = types.as_array() {
                 let entity_type = &code_entity.entity_type;
@@ -530,111 +427,82 @@ fn process_entity(
                     let url = format!("http://localhost:{}/{}", port, endpoint);
                     let id_name = if is_super {"file_id"} else {"entity_id"};
                     let payload = json!({
-                            id_name: parent_id.clone(),
-                            "entity_type": code_entity.entity_type,
-                            "text": code_entity.text,
-                            "start_byte": code_entity.start_byte,
-                            "end_byte": code_entity.end_byte,
-                            "order": code_entity.order,
-                        });
-
-                    // Send request to create entity
-                    let entity_response = post_request(&url, payload, &runtime)?;
-                    // Convert to owned String to avoid lifetime issues with threads
+                        id_name: parent_id.clone(),
+                        "entity_type": code_entity.entity_type,
+                        "text": code_entity.text,
+                        "start_byte": code_entity.start_byte,
+                        "end_byte": code_entity.end_byte,
+                        "order": code_entity.order,
+                    });
+                    let entity_response = post_request_async(&url, payload).await?;
                     let entity_id = entity_response
                         .get("entity")
                         .and_then(|v| v.get("id"))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                         .ok_or_else(|| anyhow::anyhow!("Entity ID not found"))?;
-
-                    // Embed entity if super entity
                     if is_super {
-                        // Chunk entity text
                         let chunks = chunk_entity(&code_entity.text).unwrap();
                         TOTAL_CHUNKS.fetch_add(chunks.len(), Ordering::SeqCst);
-
-                        // Process chunks in parallel using rayon
-                        chunks.par_iter().for_each(|chunk| {
+                        let chunk_tasks: Vec<JoinHandle<()>> = chunks.into_iter().map(|chunk| {
                             let chunk_clone = chunk.clone();
                             let entity_id_clone = entity_id.clone();
-
-                            // Increment thread counter
-                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                            
-                            // Increment pending embeddings counter
-                            PENDING_EMBEDDINGS.fetch_add(1, Ordering::SeqCst);
-
-                            // Send embedding job to async background worker via mpsc channel
-                            let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
                             let tx_clone = tx.clone();
-                            match tx_clone.try_send(job) {
-                                Ok(_) => {},
-                                Err(err) => {
-                                    let job_back = err.into_inner();
-                                    let tx_async = tx_clone.clone();
-                                    let rt = runtime.clone();
-                                    rt.spawn(async move {
-                                        if let Err(e) = tx_async.send(job_back).await {
-                                            eprintln!("Failed to send embedding job asynchronously: {}", e);
-                                            // If we failed to send the job, decrement the pending counter
-                                            PENDING_EMBEDDINGS.fetch_sub(1, Ordering::SeqCst);
-                                        }
-                                    });
+                            tokio::spawn(async move {
+                                let job = EmbeddingJob {chunk: chunk_clone, entity_id: entity_id_clone, port};
+                                match tx_clone.try_send(job) {
+                                    Ok(_) => {},
+                                    Err(err) => {
+                                        let job_back = err.into_inner();
+                                        let tx_async = tx_clone.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = tx_async.send(job_back).await {
+                                                eprintln!("Failed to send embedding job asynchronously: {}", e);
+                                            }
+                                        });
+                                    }
                                 }
-                            }
-
-                            // Decrement counters
-                            ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                        });
+                            })
+                        }).collect();
+                        join_all(chunk_tasks).await;
                     }
-
-                    // Recursively process children of entity in parallel
-                    if len > 0 {
-                        // Use a shared counter for order to ensure consistent ordering
+                    if !owned.children.is_empty() {
                         let order_counter = Arc::new(AtomicUsize::new(1));
-                        
-                        // Convert children into a Vec to enable parallel iteration
-                        let children_vec: Vec<_> = children.collect();
-                        
-                        // Process children in parallel
-                        children_vec.into_par_iter().for_each(|child| {
-                            // Increment thread counter
-                            ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
-                            
-                            // Use a guard to ensure counter is decremented when thread exits
-                            struct ThreadGuard;
-                            impl Drop for ThreadGuard {
-                                fn drop(&mut self) {
-                                    ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-                                }
-                            }
-                            let _guard = ThreadGuard;
-                            
-                            // Get the current order value and increment it atomically
-                            let current_order = order_counter.fetch_add(1, Ordering::SeqCst);
-                            
-                            // Clone necessary variables for the closure
-                            let source_code_clone = source_code.to_string();
-                            let entity_id_clone = entity_id.to_string();
+                        let child_tasks: Vec<JoinHandle<Result<()>>> = owned.children.into_iter().map(|child| {
+                            let entity_id_clone = entity_id.clone();
                             let extension_clone = extension.clone();
-                            let index_types_clone = Arc::clone(&index_types);
-                            let runtime_clone = Arc::clone(&runtime);
-                            
-                            // Process child entity
-                            if let Err(e) = process_entity(
-                                child,&source_code_clone,entity_id_clone,
-                                port,false,current_order,extension_clone,
-                                index_types_clone,runtime_clone,tx.clone(),
-                            ) {
-                                eprintln!("Error processing child entity: {}", e);
-                            }
-                        })
+                            let index_types_clone = index_types.clone();
+                            let tx_clone = tx.clone();
+                            let order_counter_clone = order_counter.clone();
+                            tokio::spawn(async move {
+                                let current_order = order_counter_clone.fetch_add(1, Ordering::SeqCst);
+                                process_entity(child, entity_id_clone, port, false, current_order, extension_clone, index_types_clone, tx_clone).await
+                            })
+                        }).collect();
+                        for task in child_tasks {
+                            task.await??;
+                        }
                     }
                 }
             }
         }
     }
-
     Ok(())
+}
+
+pub fn build_owned_nodes(node: Node, source: &str) -> Vec<OwnedNode> {
+    let mut res = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let text = source[child.start_byte()..child.end_byte()].to_string();
+        let owned = OwnedNode {
+            kind: child.kind().to_string(),
+            start_byte: child.start_byte(),
+            end_byte: child.end_byte(),
+            text,
+            children: build_owned_nodes(child, source),
+        };
+        res.push(owned);
+    }
+    res
 }

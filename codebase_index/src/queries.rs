@@ -1,17 +1,15 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use tokio::runtime::Runtime;
 use serde_json::json;
 
-use crate::utils::{post_request};
+use crate::utils::{post_request_async};
 
-pub fn get_root_folders (
+pub async fn get_root_folders (
     root_id: String,
-    runtime: &Runtime,
     port: u16
 ) -> Result<HashMap<String, String>> {
     let url = format!("http://localhost:{}/{}", port, "getRootFolders");
-    let root_folder_res = post_request(&url, json!({ "root_id": root_id }), &runtime)?;
+    let root_folder_res = post_request_async(&url, json!({ "root_id": root_id })).await?;
     let root_folders = root_folder_res
         .get("folders")
         .and_then(|v| v.as_array())
@@ -28,14 +26,13 @@ pub fn get_root_folders (
     Ok(root_folder_name_ids)
 }
 
-pub fn get_root_files (
+pub async fn get_root_files (
     root_id: String,
-    runtime: &Runtime,
     port: u16
 ) -> Result<HashMap<String, (String, String)>> {
     let url = format!("http://localhost:{}/{}", port, "getRootFiles");
     let payload = json!({ "root_id": root_id });
-    let root_file_res = post_request(&url, payload, &runtime)?;
+    let root_file_res = post_request_async(&url, payload).await?;
     let root_files = root_file_res
         .get("files")
         .and_then(|v| v.as_array())
@@ -53,14 +50,13 @@ pub fn get_root_files (
     Ok(root_file_name_ids)
 }
 
-pub fn get_sub_folders (
+pub async fn get_sub_folders (
     folder_id: String,
-    runtime: &Runtime,
     port: u16
 ) -> Result<HashMap<String, String>> {
     let url = format!("http://localhost:{}/{}", port, "getSubFolders");
     let payload = json!({ "folder_id": folder_id });
-    let folder_res = post_request(&url, payload, &runtime)?;
+    let folder_res = post_request_async(&url, payload).await?;
     let subfolders = folder_res
         .get("subfolders")
         .and_then(|v| v.as_array())
@@ -77,14 +73,13 @@ pub fn get_sub_folders (
     Ok(subfolder_name_ids)    
 }
 
-pub fn get_folder_files (
+pub async fn get_folder_files (
     folder_id: String,
-    runtime: &Runtime,
     port: u16
 ) -> Result<HashMap<String, (String, String)>> {
     let url = format!("http://localhost:{}/{}", port, "getFolderFiles");
     let payload = json!({ "folder_id": folder_id });
-    let folder_file_res = post_request(&url, payload, &runtime)?;
+    let folder_file_res = post_request_async(&url, payload).await?;
     let folder_files = folder_file_res
         .get("files")
         .and_then(|v| v.as_array())

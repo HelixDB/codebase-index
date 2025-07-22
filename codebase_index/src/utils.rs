@@ -7,27 +7,21 @@ use serde_json::{json, Value};
 use std::env;
 use std::path::Path;
 use std::time::{Duration};
-use tokio::runtime::Runtime;
 use governor::{Quota, RateLimiter};
 use std::num::NonZeroU32;
 use governor::state::direct::NotKeyed;
 use governor::state::InMemoryState;
 use governor::clock::DefaultClock;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc
+    atomic::{AtomicUsize},
 };
 use std::collections::HashMap;
-use rayon::prelude::*;
+use tokio::task::JoinHandle;
 use crate::queries::{get_sub_folders, get_folder_files};
-
-// Global thread counter to track active background threads
-pub static ACTIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
+use async_recursion::async_recursion;
 
 // Global counter to track total number of chunks processed
 pub static TOTAL_CHUNKS: AtomicUsize = AtomicUsize::new(0);
-
-// Global counters to track embedding jobs
 pub static PENDING_EMBEDDINGS: AtomicUsize = AtomicUsize::new(0);
 pub static COMPLETED_EMBEDDINGS: AtomicUsize = AtomicUsize::new(0);
 
@@ -49,17 +43,17 @@ lazy_static! {
         .expect("Failed to create HTTP client");
 
     static ref helix_client: reqwest::Client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(90))
         .pool_max_idle_per_host(1000)
-        .pool_idle_timeout(Duration::from_secs(60))
+        .pool_idle_timeout(Duration::from_secs(90))
         .build()
         .expect("Failed to create HTTP client");
 
     static ref EMBEDDING_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(1200).unwrap())); // Set below 1500 limit
+        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(2000).unwrap()));
 
     static ref HELIX_LIMITER: RateLimiter<NotKeyed, InMemoryState, DefaultClock> =
-        RateLimiter::direct(Quota::per_minute(NonZeroU32::new(10_000).unwrap()));
+        RateLimiter::direct(Quota::per_second(NonZeroU32::new(100).unwrap()));
 }
 
 // Chunk entity text
@@ -134,17 +128,9 @@ pub async fn embed_entity_async(text: String) -> Result<Vec<f64>> {
     Ok(result)
 }
 
-// Send POST request to Helix instance
-pub fn post_request(url: &str, body: Value, runtime: &Runtime) -> Result<Value> {
-    // Execute the async operation in the shared runtime
-    runtime.block_on(async {
-        post_request_async(url, body).await
-    })
-}
-
 // Async version of post_request
 pub async fn post_request_async(url: &str, body: Value) -> Result<Value> {
-    // HELIX_LIMITER.until_ready().await;
+    HELIX_LIMITER.until_ready().await;
 
     // Use the global HTTP client with connection pooling
     let res = match helix_client.post(url).json(&body).send().await {
@@ -190,72 +176,72 @@ pub struct CodeEntity {
 
 // Shared delete functions used by both ingestion and update processes
 
-pub fn delete_folder(
+#[async_recursion]
+pub async fn delete_folder(
     folder_id: String,
     port: u16,
-    runtime: Arc<Runtime>,
 ) -> Result<()> {
-    let subfolder_name_ids  = get_sub_folders(folder_id.clone(), &runtime, port)?;
+    let subfolder_name_ids  = get_sub_folders(folder_id.clone(), port).await?;
     // println!("Subfolder IDs: {:#?}", subfolder_name_ids);
 
     // Find folders that are not in the index
-    let unseen_folders = subfolder_name_ids.keys().collect::<Vec<_>>();
+    let unseen_folders = subfolder_name_ids.keys().cloned().collect::<Vec<_>>();
 
-    unseen_folders.par_iter().for_each(|folder_name| {
-        let sub_folder_id = subfolder_name_ids.get(&folder_name.to_string()).unwrap().to_string();
-        let runtime_clone = Arc::clone(&runtime);
-        let _ = delete_folder(sub_folder_id, port, runtime_clone);
-    });
+    let tasks: Vec<JoinHandle<Result<()>>> = unseen_folders.into_iter().map(|folder_name| {
+        let sub_folder_id = subfolder_name_ids.get(&folder_name).unwrap().to_string().clone();
+
+        tokio::spawn(Box::pin(async move {
+            delete_folder(sub_folder_id, port).await
+        }))
+    }).collect();
+
+    for task in tasks {
+        task.await??;
+    }
 
     // Get folder files
-    let folder_file_name_ids = get_folder_files(folder_id.clone(), &runtime, port)?;
+    let folder_file_name_ids = get_folder_files(folder_id.clone(), port).await?;
     // println!("Subfolder file IDs: {:#?}", folder_file_name_ids);
 
-    let unseen_files = folder_file_name_ids.keys().map(|s| s.to_string()).collect::<Vec<_>>();
+    let unseen_files = folder_file_name_ids.keys().cloned().collect::<Vec<_>>();
 
-    delete_files(unseen_files.clone(), folder_file_name_ids.clone(), runtime.clone(), port)?;
+    delete_files(unseen_files.clone(), folder_file_name_ids.clone(), port).await?;
 
     let url = format!("http://localhost:{}/{}", port, "deleteFolder");
     let payload = json!({ "folder_id": folder_id });
-    post_request(&url, payload, &runtime)?;
+    post_request_async(&url, payload).await?;
     Ok(())
 }
 
-pub fn delete_files(
+pub async fn delete_files(
     unseen_files: Vec<String>,
     file_name_ids: HashMap<String, (String, String)>,
-    runtime: Arc<Runtime>,
     port: u16
 ) -> Result<()> {
-    unseen_files.par_iter().for_each(|file_name| {
-        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+    let tasks: Vec<JoinHandle<Result<()>>> = unseen_files.into_iter().map(|file_name| {
+        let file_id = file_name_ids.get(&file_name).unwrap().0.clone();
 
-        // Use a guard to ensure counter is decremented when thread exits
-        struct ThreadGuard;
-        impl Drop for ThreadGuard {
-            fn drop(&mut self) {
-                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-        let _guard = ThreadGuard;
+        tokio::spawn(async move {
+            let url = format!("http://localhost:{}/{}", port, "deleteFile");
+            let payload = json!({ "file_id": file_id });
+            let _ = post_request_async(&url, payload).await;
+            
+            let _ = delete_entities(file_id, true, port).await;
+            Ok(())
+        })
+    }).collect();
 
-        let runtime_inner = Arc::clone(&runtime);
-        let file_id = file_name_ids.get(&file_name.to_string()).unwrap().0.clone();
-
-        let url = format!("http://localhost:{}/{}", port, "deleteFile");
-        let payload = json!({ "file_id": file_id });
-        let _ = post_request(&url, payload, &runtime_inner);
-        
-        let _ = delete_entities(file_id, true, port, runtime_inner);
-    });
+    for task in tasks {
+        task.await??;
+    }
     Ok(())
 }
 
-pub fn delete_entities(
+#[async_recursion]
+pub async fn delete_entities(
     parent_id: String,
     is_super: bool,
     port: u16,
-    runtime: Arc<Runtime>,
 ) -> Result<()> {
     let url;
     let body;
@@ -273,7 +259,7 @@ pub fn delete_entities(
         delete_url = format!("http://localhost:{}/{}", port, "deleteSubEntity");
     }
 
-    let response = post_request(&url, body, &runtime)?;
+    let response = post_request_async(&url, body).await?;
     let entities = response
         .get(res_index)
         .and_then(|v| v.as_array())
@@ -284,23 +270,18 @@ pub fn delete_entities(
         .map(|v| v.get("id").and_then(|v| v.as_str()).unwrap().to_string())
         .collect();
 
-    entity_ids.par_iter().for_each(|entity_id| {
-        ACTIVE_THREADS.fetch_add(1, Ordering::SeqCst);
+    let tasks: Vec<JoinHandle<Result<()>>> = entity_ids.into_iter().map(|entity_id| {
+        let delete_url_clone = delete_url.clone();
+        tokio::spawn(Box::pin(async move {
+            let _ = delete_entities(entity_id.clone(), false, port).await;
+            let _ = post_request_async(&delete_url_clone, json!({ "entity_id": entity_id })).await;
+            Ok(())
+        }))
+    }).collect();
 
-        struct ThreadGuard;
-        impl Drop for ThreadGuard {
-            fn drop(&mut self) {
-                ACTIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-        let _guard = ThreadGuard;
-
-        let runtime_clone = Arc::clone(&runtime);
-
-        let _ = delete_entities(entity_id.to_string(), false, port, runtime_clone);
-
-        let _ = post_request(&delete_url, json!({ "entity_id": entity_id }), &runtime);
-    });
+    for task in tasks {
+        task.await??;
+    }
 
     Ok(())
 }
